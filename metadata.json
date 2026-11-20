@@ -1,0 +1,6 @@
+{
+  "name": "Midnight Club: No Hesi Web 3D",
+  "description": "Juego 3D nocturno de tráfico No Hesi con concesionario explorable a pie, hangar de tuneo con underglow, persecuciones policiales con sirenas bicolor, clima de lluvia con asfalto mojado y misiones en tiempo real.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
