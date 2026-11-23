@@ -1,16 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
+  Award,
   ChevronLeft,
   ChevronRight,
   Crosshair,
+  Crown,
+  Flag,
+  Flame,
+  Radio,
   Settings,
+  Swords,
   Target,
   Zap,
 } from 'lucide-react';
 import {
   formatPrimaryKeyLabel,
   GameSettings,
+  getRankFromXp,
   HudSnapshot,
   SaveProfile,
 } from '../game/types';
@@ -21,11 +28,14 @@ interface HighwayHUDProps {
   hud: HudSnapshot;
   onExitHighway: () => void;
   onOpenSettings: () => void;
+  onOpenProgression: () => void;
   onTogglePointerLock: () => void;
   onToggleTransmission: () => void;
   onToggleTcs: () => void;
   onToggleAbs: () => void;
   onShiftGear: (delta: 1 | -1) => void;
+  onCycleRadio: () => void;
+  onFlashHeadlights: () => void;
   onTouchControl: (key: 'throttle' | 'brake' | 'left' | 'right' | 'nitro', active: boolean) => void;
 }
 
@@ -69,22 +79,33 @@ export const HighwayHUD: React.FC<HighwayHUDProps> = ({
   hud,
   onExitHighway,
   onOpenSettings,
+  onOpenProgression,
   onTogglePointerLock,
   onToggleTransmission,
   onToggleTcs,
   onToggleAbs,
   onShiftGear,
+  onCycleRadio,
+  onFlashHeadlights,
   onTouchControl,
 }) => {
   const [isTouchDevice, setIsTouchDevice] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
-    const mq = window.matchMedia('(pointer: coarse)');
-    setIsTouchDevice(mq.matches);
-    const onChange = (ev: MediaQueryListEvent) => setIsTouchDevice(ev.matches);
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
+    const coarseMq = window.matchMedia('(pointer: coarse)');
+    const fineHoverMq = window.matchMedia('(any-pointer: fine) and (hover: hover)');
+    const checkTouchOnly = () =>
+      setIsTouchDevice(
+        coarseMq.matches && navigator.maxTouchPoints > 0 && !fineHoverMq.matches
+      );
+    checkTouchOnly();
+    coarseMq.addEventListener('change', checkTouchOnly);
+    fineHoverMq.addEventListener('change', checkTouchOnly);
+    return () => {
+      coarseMq.removeEventListener('change', checkTouchOnly);
+      fineHoverMq.removeEventListener('change', checkTouchOnly);
+    };
   }, []);
 
   const isMph = settings.speedUnits === 'MPH';
@@ -108,6 +129,9 @@ export const HighwayHUD: React.FC<HighwayHUDProps> = ({
   const shiftUpKey = formatPrimaryKeyLabel(settings.keybindings.shiftUp);
   const shiftDownKey = formatPrimaryKeyLabel(settings.keybindings.shiftDown);
   const pointerKey = formatPrimaryKeyLabel(settings.keybindings.togglePointerLock);
+  const radioKey = formatPrimaryKeyLabel(settings.keybindings.toggleRadio);
+  const flashKey = formatPrimaryKeyLabel(settings.keybindings.flashHeadlights);
+  const pilotRank = getRankFromXp(profile.xp);
 
   // Tachometer calculations (scales cleanly from 9,000 RPM up to 11,000 RPM with CDI Racing)
   const dialMaxRpm = Math.max(9000, Math.ceil(hud.maxRpm / 1000) * 1000);
@@ -156,10 +180,23 @@ export const HighwayHUD: React.FC<HighwayHUDProps> = ({
 
   return (
     <div className="pointer-events-none absolute inset-0 z-10 flex flex-col justify-between p-3 md:p-5">
+      {/* White Speed-Radar Flash Fullscreen Overlay */}
+      {hud.radarFlashOpacity > 0.01 && (
+        <div
+          className="pointer-events-none fixed inset-0 z-30 bg-white"
+          style={{ opacity: Math.min(0.9, hud.radarFlashOpacity) }}
+        />
+      )}
+
+      {/* Bullet Time Extreme Near-Miss Border Vignette */}
+      {hud.bulletTimeActive && (
+        <div className="pointer-events-none fixed inset-0 z-20 border-4 border-sky-400/65 shadow-[inset_0_0_70px_rgba(56,189,248,0.28)]" />
+      )}
+
       {/* Top Bar: Clean & Minimalist */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-col items-start gap-2">
-          <div className="pointer-events-auto flex items-center gap-2 border border-white/10 bg-[#090b10]/90 px-3 py-1.5 shadow-lg">
+          <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 sm:gap-2 border border-white/10 bg-[#090b10]/90 px-3 py-1.5 shadow-lg">
             <button
               type="button"
               onClick={onExitHighway}
@@ -178,6 +215,30 @@ export const HighwayHUD: React.FC<HighwayHUDProps> = ({
             >
               Caja: {activeTx} [{txKey}]
             </button>
+
+            <button
+              type="button"
+              onClick={onCycleRadio}
+              className={`flex items-center gap-1.5 border px-2.5 py-1.5 font-telemetry text-xs font-bold whitespace-nowrap shrink-0 cursor-pointer ${
+                hud.radioStation !== 'OFF'
+                  ? 'border-fuchsia-400/50 bg-fuchsia-500/15 text-fuchsia-200'
+                  : 'border-white/10 bg-[#141923] text-slate-300 hover:text-white'
+              }`}
+              title={`Radio Phonk / Synthwave [${radioKey}]`}
+            >
+              <Radio className="h-3.5 w-3.5" />
+              {hud.radioStation} [{radioKey}]
+            </button>
+
+            <button
+              type="button"
+              onClick={onFlashHeadlights}
+              className="flex items-center gap-1.5 border border-white/10 bg-[#141923] px-2.5 py-1.5 font-telemetry text-xs font-bold text-sky-300 hover:border-sky-400/50 hover:text-white whitespace-nowrap shrink-0 cursor-pointer"
+              title={`Destellar largas / Retar duelo 1v1 [${flashKey}]`}
+            >
+              <Swords className="h-3.5 w-3.5" />
+              Duelo [{flashKey}]
+            </button>
           </div>
 
           {/* Discrete 1-line Active Mission Strip */}
@@ -195,10 +256,34 @@ export const HighwayHUD: React.FC<HighwayHUDProps> = ({
               +${hud.mission.mission.reward.toLocaleString()}
             </span>
           </div>
+
+          {/* Active CONTRATO EXPRESS Checkpoint & Timer Strip */}
+          {hud.contractActive && (
+            <div className="flex items-center gap-2 border border-amber-400/55 bg-[#1b1407]/94 px-3 py-1.5 text-[11px] shadow-lg">
+              <Flag className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+              <span className="font-bold uppercase tracking-wider text-amber-200">
+                Contrato Express
+              </span>
+              <span className="text-slate-500">·</span>
+              <span className="font-telemetry font-bold text-white">
+                CP {hud.contractCheckpointIdx}/{hud.contractCheckpointTotal}
+              </span>
+              <span className="text-slate-500">·</span>
+              <span
+                className={`font-telemetry font-bold ${
+                  hud.contractTimerSec <= 15 ? 'text-red-400' : 'text-amber-300'
+                }`}
+              >
+                {Math.max(0, Math.ceil(hud.contractTimerSec))}s
+              </span>
+              <span className="text-slate-500">·</span>
+              <span className="font-telemetry font-bold text-emerald-400">+$18,000</span>
+            </div>
+          )}
         </div>
 
-        {/* Top-Right: Distance + Session + Cash + Free Cam [Tab] + Settings Gear */}
-        <div className="pointer-events-auto flex items-center gap-3 border border-white/10 bg-[#090b10]/90 px-3.5 py-2 shadow-lg">
+        {/* Top-Right: Distance + Session + Cash + Rank + Free Cam [Tab] + Settings Gear */}
+        <div className="pointer-events-auto flex items-center gap-2.5 sm:gap-3 border border-white/10 bg-[#090b10]/90 px-3.5 py-2 shadow-lg">
           <div className="text-right">
             <div className="text-[10px] uppercase tracking-wider text-slate-400">Distancia</div>
             <div className="font-telemetry text-sm font-bold text-slate-100">
@@ -220,6 +305,15 @@ export const HighwayHUD: React.FC<HighwayHUDProps> = ({
             </div>
           </div>
           <div className="h-6 w-px bg-white/10" />
+          <button
+            type="button"
+            onClick={onOpenProgression}
+            title="Rango de Piloto y Desafíos"
+            className="flex h-7 items-center gap-1 border border-amber-400/35 bg-amber-500/10 px-2 text-amber-300 hover:border-amber-300 hover:text-white cursor-pointer"
+          >
+            <Award className="h-3.5 w-3.5" />
+            <span className="font-telemetry text-[10px] font-bold">Nv.{pilotRank}</span>
+          </button>
           <button
             type="button"
             onClick={onTogglePointerLock}
@@ -249,8 +343,51 @@ export const HighwayHUD: React.FC<HighwayHUDProps> = ({
         </div>
       </div>
 
-      {/* Transient Event Banners */}
+      {/* Transient Event Banners, King Crown & Duel Scoreboard */}
       <div className="mx-auto flex flex-col items-center gap-1.5 pointer-events-none">
+        {hud.isKing && (
+          <div className="flex items-center gap-1.5 border border-amber-400/60 bg-[#1f1606]/95 px-3.5 py-1 text-[11px] font-extrabold uppercase tracking-wider text-amber-300 shadow-lg">
+            <Crown className="h-3.5 w-3.5 text-amber-400" />
+            Rey de la Autopista · +50% XP / Dinero
+          </div>
+        )}
+        {hud.duelState && (
+          <div className="flex items-center gap-3 border border-sky-400/55 bg-[#091526]/95 px-4 py-1.5 text-xs font-bold text-white shadow-lg">
+            <Swords className="h-3.5 w-3.5 text-sky-400" />
+            {hud.duelState.resultBanner ? (
+              <span className="text-amber-300">{hud.duelState.resultBanner}</span>
+            ) : (
+              <>
+                <span className="uppercase tracking-wider text-sky-300">Duelo</span>
+                <span className="font-telemetry text-emerald-300">
+                  TÚ {hud.duelState.myScore}
+                </span>
+                <span className="text-slate-500">vs</span>
+                <span className="font-telemetry text-red-300">
+                  {hud.duelState.opponentName} {hud.duelState.opponentScore}
+                </span>
+                <span className="font-telemetry text-amber-300">
+                  · {Math.max(0, Math.ceil(hud.duelState.remainingSec))}s
+                </span>
+              </>
+            )}
+          </div>
+        )}
+        {hud.extremeRoceBanner && (
+          <div className="border border-sky-300/75 bg-[#071c2c]/95 px-5 py-1.5 font-telemetry text-sm font-black tracking-wider text-sky-200 shadow-2xl">
+            {hud.extremeRoceBanner}
+          </div>
+        )}
+        {hud.radarResultBanner && (
+          <div className="border border-cyan-300/70 bg-[#081a24]/95 px-4 py-1 font-telemetry text-xs font-extrabold text-cyan-200 shadow-lg">
+            {hud.radarResultBanner}
+          </div>
+        )}
+        {hud.contractBanner && (
+          <div className="border border-amber-400/65 bg-[#1b1507]/95 px-4 py-1.5 text-xs font-extrabold text-amber-200 shadow-lg">
+            {hud.contractBanner}
+          </div>
+        )}
         {hud.mission.completedBanner && (
           <div className="border border-emerald-400/50 bg-[#0d1f18]/95 px-4 py-1.5 text-xs font-extrabold text-emerald-300 shadow-lg">
             {hud.mission.completedBanner}
@@ -348,17 +485,26 @@ export const HighwayHUD: React.FC<HighwayHUDProps> = ({
               isTouchDevice ? '' : 'ml-auto'
             }`}
           >
-            {/* Combo bar cleanly tucked above dial only when active */}
-            {hud.combo > 0 && (
-              <div className="mb-1.5 w-44 border border-white/10 bg-[#090b10]/92 px-2.5 py-1 shadow-lg">
-                <div className="flex justify-between text-[10px] font-telemetry font-bold text-amber-300 mb-0.5">
-                  <span>Combo Roces</span>
-                  <span>x{hud.combo}</span>
+            {/* Extreme "No Hesi" Combo x1..x25 + Pending Cash at Risk */}
+            {(hud.combo > 0 || hud.pendingCash > 0) && (
+              <div className="mb-1.5 w-52 border border-amber-400/35 bg-[#090b10]/94 px-3 py-1.5 shadow-lg">
+                <div className="flex items-center justify-between text-[10px] font-telemetry font-bold mb-0.5">
+                  <span className="flex items-center gap-1 text-amber-300 uppercase">
+                    <Flame className="h-3 w-3 text-[#e10600]" />
+                    No Hesi x{hud.comboMultiplier}
+                  </span>
+                  <span className="text-emerald-300">
+                    ${hud.pendingCash.toLocaleString()}
+                  </span>
                 </div>
-                <div className="h-1 w-full bg-slate-800 overflow-hidden">
+                <div className="flex items-center justify-between text-[9px] text-slate-400 mb-1">
+                  <span>{hud.combo} roces en cadena</span>
+                  <span className="text-amber-200/80">¡No choques!</span>
+                </div>
+                <div className="h-1.5 w-full bg-slate-800 overflow-hidden">
                   <div
                     className="h-full bg-amber-400"
-                    style={{ width: `${hud.comboTimerRatio * 100}%` }}
+                    style={{ width: `${Math.max(2, hud.pendingBankTimerRatio * 100)}%` }}
                   />
                 </div>
               </div>

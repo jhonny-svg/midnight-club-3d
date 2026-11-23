@@ -1,15 +1,84 @@
 import * as THREE from 'three';
+import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { ProceduralTextureSet } from './textures';
-import { CAR_CATALOG, GraphicsQuality, WeatherMode } from './types';
+import { CAR_CATALOG, GraphicsQuality, ViewDistance, WeatherMode } from './types';
 import { buildCompositeVehicle, BuiltVehicle } from './vehicleBuilder';
 
-export const PARKING_PLAYER_CAR_POS = { x: 18.0, y: 0, z: 0.6, rotY: 0.72 };
-export const TUNER_ENTRY_POS = { x: 17.5, y: 0, z: -15.5 };
-export const TUNER_BAY_POS = { x: 17.5, y: 0, z: -19.8 };
-export const DEALERSHIP_ENTRY_POS = { x: 29.8, y: 0, z: -2.5 };
-export const DEALERSHIP_FOCUS_POS = { x: 41.4, y: 1.0, z: -2.5 };
-export const PARKING_BOUNDS = { minX: 10.2, maxX: 29.8, minZ: -16.0, maxZ: 11.0 };
-export const DEALERSHIP_INTERIOR_BOUNDS = { minX: 30.2, maxX: 50.2, minZ: -15.4, maxZ: 10.4 };
+export const HIGHWAY_Y = 4.5;
+export const RAMP_BOTTOM_Z = 8.0;
+export const RAMP_TOP_Z = -122.0;
+export const RAMP_MERGE_END_Z = -195.0;
+
+export const PARKING_PLAYER_CAR_POS = { x: 38.2, y: 0.015, z: 14.5, rotY: -2.36 };
+export const TUNER_ENTRY_POS = { x: 30.0, y: 0, z: -1.8 };
+export const TUNER_BAY_POS = { x: 30.0, y: 0, z: -7.6 };
+export const TUNER_BAY_X_CENTERS = [24.8, 30.0, 35.2];
+export const DEALERSHIP_ENTRY_POS = { x: 51.0, y: 0, z: 2.2 };
+export const DEALERSHIP_COUNTER_POS = { x: 54.4, y: 0, z: -0.8 };
+export const DEALERSHIP_FOCUS_POS = { x: 51.5, y: 1.0, z: -10.8 };
+export const PARKING_BOUNDS = { minX: 22.3, maxX: 66.8, minZ: -1.6, maxZ: 28.8 };
+export const DEALERSHIP_INTERIOR_BOUNDS = { minX: 38.4, maxX: 63.4, minZ: -17.4, maxZ: 1.8 };
+export const INTERIOR_CONNECT_BOUNDS = { minX: 37.2, maxX: 39.2, minZ: -9.8, maxZ: -6.2 };
+export const WALK_DOOR_BOUNDS = { minX: 48.0, maxX: 54.0, minZ: -1.8, maxZ: 3.0 };
+export const CAR_MEET_BOUNDS = { minX: 26.5, maxX: 36.5, minZ: 18.5, maxZ: 26.5 };
+export const CAR_MEET_CENTER = { x: 31.5, z: 22.5 };
+export const CONTRACT_POS = { x: 25.0, y: 0, z: 6.2 };
+
+export interface BoxObstacle2D {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+export const PADDOCK_OBSTACLES: BoxObstacle2D[] = [
+  // Car carrier truck (back-left)
+  { minX: 52.0, maxX: 61.5, minZ: 5.5, maxZ: 12.8 },
+  // Stacked shipping containers
+  { minX: 57.0, maxX: 64.2, minZ: 14.4, maxZ: 19.0 },
+  // Red paddock tent #1 + parked car
+  { minX: 52.5, maxX: 58.2, minZ: 20.4, maxZ: 25.8 },
+  // Red paddock tent #2 + parked car
+  { minX: 45.2, maxX: 50.8, minZ: 23.0, maxZ: 28.4 },
+  // Giant leaderboard billboard pylons
+  { minX: 63.8, maxX: 67.6, minZ: 1.8, maxZ: 7.2 },
+];
+
+export function getRampElevationAtZ(z: number): number {
+  if (z >= RAMP_BOTTOM_Z) return 0;
+  if (z <= RAMP_TOP_Z) return HIGHWAY_Y;
+  const t = (RAMP_BOTTOM_Z - z) / (RAMP_BOTTOM_Z - RAMP_TOP_Z);
+  return HIGHWAY_Y * (3 * t * t - 2 * t * t * t);
+}
+
+export function getRampSlopeAtZ(z: number): number {
+  if (z >= RAMP_BOTTOM_Z || z <= RAMP_TOP_Z) return 0;
+  const span = RAMP_BOTTOM_Z - RAMP_TOP_Z;
+  const t = (RAMP_BOTTOM_Z - z) / span;
+  // dy / d(-z) = HIGHWAY_Y * (6t - 6t^2) / span
+  return (HIGHWAY_Y * (6 * t * (1 - t))) / span;
+}
+
+export function getRampBoundsAtZ(z: number): { leftX: number; rightX: number } {
+  if (z >= RAMP_BOTTOM_Z) {
+    return { leftX: 12.0, rightX: 21.6 };
+  }
+  if (z > RAMP_TOP_Z) {
+    const t = (RAMP_BOTTOM_Z - z) / (RAMP_BOTTOM_Z - RAMP_TOP_Z);
+    return {
+      leftX: 12.0 - t * 1.2,
+      rightX: 21.6 - t * 0.8,
+    };
+  }
+  if (z > RAMP_MERGE_END_Z) {
+    const t = (RAMP_TOP_Z - z) / (RAMP_TOP_Z - RAMP_MERGE_END_Z);
+    return {
+      leftX: 10.8,
+      rightX: 20.8 - t * 9.8,
+    };
+  }
+  return { leftX: 10.8, rightX: 11.0 };
+}
 
 export interface TrackSample {
   x: number;
@@ -34,15 +103,23 @@ export interface TrackProjection {
   yaw: number;
 }
 
+export interface MedianOpeningWindow {
+  startS: number;
+  endS: number;
+  centerS: number;
+}
+
 export interface ClosedLoopTrack {
   totalLength: number;
   sampleCount: number;
   samples: TrackSample[];
-  parkingOpenStartS: number;
-  parkingOpenEndS: number;
+  rampMergeStartS: number;
+  rampMergeEndS: number;
+  medianOpenings: MedianOpeningWindow[];
   wrapS: (s: number) => number;
   shortestSignedDeltaS: (fromS: number, toS: number) => number;
-  isInParkingOpening: (s: number) => boolean;
+  isInRampMergeZone: (s: number) => boolean;
+  isInMedianOpening: (s: number) => boolean;
   sampleAtS: (s: number, out: TrackSample) => TrackSample;
   projectToTrack: (
     wx: number,
@@ -60,11 +137,32 @@ export interface ShowcaseEntry {
   vehicle: BuiltVehicle;
 }
 
+export interface HighwayRadarNode {
+  id: string;
+  label: string;
+  s: number;
+  limitKmh: number;
+  x: number;
+  z: number;
+  flashMesh: THREE.Mesh;
+}
+
+export interface ContractCheckpointNode {
+  s: number;
+  x: number;
+  z: number;
+  yaw: number;
+  group: THREE.Group;
+  ringMat: THREE.MeshBasicMaterial;
+}
+
 export interface MetropolisWorld {
   group: THREE.Group;
   parkingComplexGroup: THREE.Group;
   track: ClosedLoopTrack;
   showcaseEntries: ShowcaseEntry[];
+  radarNodes: HighwayRadarNode[];
+  contractCheckpoints: ContractCheckpointNode[];
   asphaltMat: THREE.MeshPhysicalMaterial;
   roadMesh: THREE.Mesh;
   cityGround: THREE.Mesh;
@@ -75,9 +173,15 @@ export interface MetropolisWorld {
   keyLight: THREE.DirectionalLight;
   setAtmosphere: (weather: WeatherMode, scene: THREE.Scene) => void;
   setQuality: (quality: GraphicsQuality) => void;
+  setViewDistance: (
+    viewDist: ViewDistance,
+    scene: THREE.Scene,
+    camera: THREE.PerspectiveCamera
+  ) => void;
   updateScroll: (
     anchorX: number,
     anchorZ: number,
+    anchorY: number,
     speedMs: number,
     dt: number,
     isStorm: boolean,
@@ -86,42 +190,48 @@ export interface MetropolisWorld {
   dispose: () => void;
 }
 
+function isSInWindow(ws: number, startS: number, endS: number): boolean {
+  if (startS <= endS) {
+    return ws >= startS && ws <= endS;
+  }
+  return ws >= startS || ws <= endS;
+}
+
 function createClosedLoopTrack(): ClosedLoopTrack {
-  // Control points trace a 3.3+ km counter-clockwise loop on the -X (West) side,
-  // with a ruler-straight Home Straight along x = 0 from z = +110 through z = -90
-  // so the Parking, Taller, and Concesionario on +X sit flush and completely unobstructed.
+  // Ruler-straight Northbound/Southbound Home Straight along x = 0 from z = +225 to z = -235
+  // followed by a varied 3.5+ km closed elevated highway loop with sweeping curves & S-bends.
   const controlPoints = [
-    new THREE.Vector3(0, 0, 175),
-    new THREE.Vector3(0, 0, 110),
-    new THREE.Vector3(0, 0, 45),
-    new THREE.Vector3(0, 0, -25),
-    new THREE.Vector3(0, 0, -90),
-    new THREE.Vector3(0, 0, -160),
+    new THREE.Vector3(0, 0, 225),
+    new THREE.Vector3(0, 0, 150),
+    new THREE.Vector3(0, 0, 75),
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -75),
+    new THREE.Vector3(0, 0, -150),
+    new THREE.Vector3(0, 0, -225),
 
-    // Sweeping NW fast turn 1
-    new THREE.Vector3(-24, 0, -245),
-    new THREE.Vector3(-95, 0, -330),
-    new THREE.Vector3(-215, 0, -390),
+    // North-West high-speed sweeper
+    new THREE.Vector3(-28, 0, -315),
+    new THREE.Vector3(-110, 0, -395),
+    new THREE.Vector3(-235, 0, -455),
 
-    // North Wangan S-bend & high-speed straightaway
-    new THREE.Vector3(-365, 0, -415),
-    new THREE.Vector3(-515, 0, -365),
-    new THREE.Vector3(-655, 0, -420),
-    new THREE.Vector3(-785, 0, -355),
+    // Northern Wangan S-curves
+    new THREE.Vector3(-390, 0, -475),
+    new THREE.Vector3(-540, 0, -415),
+    new THREE.Vector3(-685, 0, -470),
+    new THREE.Vector3(-820, 0, -395),
 
-    // Wide West banking hairpin
-    new THREE.Vector3(-865, 0, -245),
-    new THREE.Vector3(-885, 0, -110),
-    new THREE.Vector3(-845, 0, 30),
+    // West panoramic hairpin curve
+    new THREE.Vector3(-905, 0, -275),
+    new THREE.Vector3(-925, 0, -130),
+    new THREE.Vector3(-880, 0, 25),
 
-    // South-West technical sweepers & grand curve back to Home Straight
-    new THREE.Vector3(-760, 0, 165),
-    new THREE.Vector3(-635, 0, 260),
-    new THREE.Vector3(-480, 0, 315),
-    new THREE.Vector3(-325, 0, 330),
-    new THREE.Vector3(-185, 0, 305),
-    new THREE.Vector3(-85, 0, 255),
-    new THREE.Vector3(-22, 0, 215),
+    // South-West technical curves returning toward Home Straight
+    new THREE.Vector3(-790, 0, 175),
+    new THREE.Vector3(-655, 0, 275),
+    new THREE.Vector3(-495, 0, 335),
+    new THREE.Vector3(-335, 0, 355),
+    new THREE.Vector3(-185, 0, 325),
+    new THREE.Vector3(-75, 0, 280),
   ];
 
   const curve = new THREE.CatmullRomCurve3(controlPoints, true, 'catmullrom', 0.5);
@@ -139,10 +249,8 @@ function createClosedLoopTrack(): ClosedLoopTrack {
     const len = Math.hypot(tx, tz) || 1;
     tx /= len;
     tz /= len;
-    // Right-hand lateral unit vector in XZ (at T=(0,-1), R=(1,0)=+X)
     const rx = -tz;
     const rz = tx;
-    // Three.js car facing -Z rotated by yaw has forward (-sin(yaw), -cos(yaw)) = (tx, tz)
     const yaw = Math.atan2(-tx, -tz);
     samples[i] = {
       x: curr.x,
@@ -221,8 +329,7 @@ function createClosedLoopTrack(): ClosedLoopTrack {
       }
     }
 
-    // Full scan fallback if far from hint or no hint supplied
-    if (hintS === null || bestDistSq > 900) {
+    if (hintS === null || bestDistSq > 1100) {
       bestDistSq = Infinity;
       for (let i = 0; i < sampleCount; i++) {
         const p = samples[i];
@@ -280,8 +387,6 @@ function createClosedLoopTrack(): ClosedLoopTrack {
     return Math.sqrt(bestDistSq);
   };
 
-  // Determine exact arc-length window [parkingOpenStartS, parkingOpenEndS]
-  // covering z in [-16.0, +11.2] along the Home Straight (x approx 0)
   const projTmp: TrackProjection = {
     s: 0,
     laneOffset: 0,
@@ -293,26 +398,52 @@ function createClosedLoopTrack(): ClosedLoopTrack {
     rz: 0,
     yaw: 0,
   };
-  const parkingOpenStartS = projectToTrack(0, 11.2, null, projTmp).s;
-  const parkingOpenEndS = projectToTrack(0, -16.0, parkingOpenStartS, projTmp).s;
 
-  const isInParkingOpening = (s: number): boolean => {
+  // Merge opening on the right edge of the Elevated Highway: z in [-195, -122]
+  const rampMergeStartS = projectToTrack(0, RAMP_TOP_Z, null, projTmp).s;
+  const rampMergeEndS = projectToTrack(0, RAMP_MERGE_END_Z, rampMergeStartS, projTmp).s;
+
+  // 5 strategic 46m-long openings in the Center Median for U-turns & oncoming crossovers
+  const medianAnchorCoords: Array<[number, number]> = [
+    [0, -255],
+    [-465, -440],
+    [-915, -135],
+    [-510, 330],
+    [0, 105],
+  ];
+  const medianOpenings: MedianOpeningWindow[] = medianAnchorCoords.map(([ax, az]) => {
+    const cs = projectToTrack(ax, az, null, projTmp).s;
+    return {
+      centerS: cs,
+      startS: wrapS(cs - 23),
+      endS: wrapS(cs + 23),
+    };
+  });
+
+  const isInRampMergeZone = (s: number): boolean => {
+    return isSInWindow(wrapS(s), rampMergeStartS, rampMergeEndS);
+  };
+
+  const isInMedianOpening = (s: number): boolean => {
     const ws = wrapS(s);
-    if (parkingOpenStartS <= parkingOpenEndS) {
-      return ws >= parkingOpenStartS && ws <= parkingOpenEndS;
+    for (let i = 0; i < medianOpenings.length; i++) {
+      const w = medianOpenings[i];
+      if (isSInWindow(ws, w.startS, w.endS)) return true;
     }
-    return ws >= parkingOpenStartS || ws <= parkingOpenEndS;
+    return false;
   };
 
   return {
     totalLength,
     sampleCount,
     samples,
-    parkingOpenStartS,
-    parkingOpenEndS,
+    rampMergeStartS,
+    rampMergeEndS,
+    medianOpenings,
     wrapS,
     shortestSignedDeltaS,
-    isInParkingOpening,
+    isInRampMergeZone,
+    isInMedianOpening,
     sampleAtS,
     projectToTrack,
     minDistanceToTrack,
@@ -326,7 +457,7 @@ function buildClosedTrackRibbonGeometry(
   rightOffset: number,
   yHeight: number,
   uvRepeatLenMeters: number,
-  skipParkingOpening = false
+  flipNormalDown = false
 ): THREE.BufferGeometry {
   const positions: number[] = [];
   const normals: number[] = [];
@@ -338,13 +469,10 @@ function buildClosedTrackRibbonGeometry(
   const bSample: TrackSample = { x: 0, z: 0, tx: 0, tz: -1, rx: 1, rz: 0, yaw: 0, s: 0 };
 
   let vCursor = 0;
+  const ny = flipNormalDown ? -1 : 1;
   for (let i = 0; i < segments; i++) {
     const s0 = (i / segments) * track.totalLength;
     const s1 = ((i + 1) / segments) * track.totalLength;
-    const midS = 0.5 * (s0 + s1);
-    if (skipParkingOpening && track.isInParkingOpening(midS)) {
-      continue;
-    }
 
     track.sampleAtS(s0, aSample);
     track.sampleAtS(s1, bSample);
@@ -368,10 +496,14 @@ function buildClosedTrackRibbonGeometry(
       p1Lx, yHeight, p1Lz,
       p1Rx, yHeight, p1Rz
     );
-    normals.push(0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
+    normals.push(0, ny, 0, 0, ny, 0, 0, ny, 0, 0, ny, 0);
     uvs.push(0, v0, 1, v0, 0, v1, 1, v1);
 
-    indices.push(vCursor, vCursor + 1, vCursor + 2, vCursor + 2, vCursor + 1, vCursor + 3);
+    if (flipNormalDown) {
+      indices.push(vCursor, vCursor + 2, vCursor + 1, vCursor + 2, vCursor + 3, vCursor + 1);
+    } else {
+      indices.push(vCursor, vCursor + 1, vCursor + 2, vCursor + 2, vCursor + 1, vCursor + 3);
+    }
     vCursor += 4;
   }
 
@@ -392,7 +524,8 @@ function buildClosedTrackWallGeometry(
   bottomY: number,
   topY: number,
   uvRepeatLenMeters: number,
-  skipParkingOpening: boolean
+  skipRampMerge: boolean,
+  skipMedianOpenings = false
 ): THREE.BufferGeometry {
   const positions: number[] = [];
   const uvs: number[] = [];
@@ -425,9 +558,8 @@ function buildClosedTrackWallGeometry(
     const segStart = (i / segments) * track.totalLength;
     const segEnd = ((i + 1) / segments) * track.totalLength;
     const midS = 0.5 * (segStart + segEnd);
-    if (skipParkingOpening && track.isInParkingOpening(midS)) {
-      continue;
-    }
+    if (skipRampMerge && track.isInRampMergeZone(midS)) continue;
+    if (skipMedianOpenings && track.isInMedianOpening(midS)) continue;
 
     track.sampleAtS(segStart, sA);
     track.sampleAtS(segEnd, sB);
@@ -480,6 +612,285 @@ function buildClosedTrackWallGeometry(
   return geo;
 }
 
+function buildSlopedEmbankmentGeometry(
+  track: ClosedLoopTrack,
+  segments: number,
+  innerOff: number,
+  outerOff: number,
+  innerY: number,
+  outerY: number
+): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  const sA: TrackSample = { x: 0, z: 0, tx: 0, tz: -1, rx: 1, rz: 0, yaw: 0, s: 0 };
+  const sB: TrackSample = { x: 0, z: 0, tx: 0, tz: -1, rx: 1, rz: 0, yaw: 0, s: 0 };
+  let vCursor = 0;
+
+  for (let i = 0; i < segments; i++) {
+    const segStart = (i / segments) * track.totalLength;
+    const segEnd = ((i + 1) / segments) * track.totalLength;
+    const midS = 0.5 * (segStart + segEnd);
+    track.sampleAtS(midS, sA);
+    // Keep embankment clear of Parking / Complex / Ramp zone on +X
+    if (innerOff > 0 && sA.x > -20 && sA.z > -208 && sA.z < 42) {
+      continue;
+    }
+
+    track.sampleAtS(segStart, sA);
+    track.sampleAtS(segEnd, sB);
+
+    const aInX = sA.x + sA.rx * innerOff;
+    const aInZ = sA.z + sA.rz * innerOff;
+    const aOutX = sA.x + sA.rx * outerOff;
+    const aOutZ = sA.z + sA.rz * outerOff;
+
+    const bInX = sB.x + sB.rx * innerOff;
+    const bInZ = sB.z + sB.rz * innerOff;
+    const bOutX = sB.x + sB.rx * outerOff;
+    const bOutZ = sB.z + sB.rz * outerOff;
+
+    const swap = innerOff < 0;
+    if (swap) {
+      positions.push(
+        aOutX, outerY, aOutZ,
+        aInX, innerY, aInZ,
+        bOutX, outerY, bOutZ,
+        bInX, innerY, bInZ
+      );
+    } else {
+      positions.push(
+        aInX, innerY, aInZ,
+        aOutX, outerY, aOutZ,
+        bInX, innerY, bInZ,
+        bOutX, outerY, bOutZ
+      );
+    }
+    uvs.push(0, i * 0.25, 1, i * 0.25, 0, (i + 1) * 0.25, 1, (i + 1) * 0.25);
+    indices.push(vCursor, vCursor + 1, vCursor + 2, vCursor + 2, vCursor + 1, vCursor + 3);
+    vCursor += 4;
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+function buildIncorporationRampGeometries(): {
+  deckGeo: THREE.BufferGeometry;
+  leftWallGeo: THREE.BufferGeometry;
+  rightWallGeo: THREE.BufferGeometry;
+  mergeDeckGeo: THREE.BufferGeometry;
+  mergeChevronGeo: THREE.BufferGeometry;
+  mergeOuterWallGeo: THREE.BufferGeometry;
+} {
+  // 1. Main climbing deck from z = +8.0 (y = 0.015) up to z = -122.0 (y = 4.51)
+  const steps = 64;
+  const deckPos: number[] = [];
+  const deckNorm: number[] = [];
+  const deckUv: number[] = [];
+  const deckIdx: number[] = [];
+
+  const leftWallPos: number[] = [];
+  const leftWallUv: number[] = [];
+  const leftWallIdx: number[] = [];
+
+  const rightWallPos: number[] = [];
+  const rightWallUv: number[] = [];
+  const rightWallIdx: number[] = [];
+
+  let dCur = 0;
+  let lwCur = 0;
+  let rwCur = 0;
+
+  const pushWallQuad = (
+    posArr: number[],
+    uvArr: number[],
+    idxArr: number[],
+    curRef: { c: number },
+    x0: number, y0: number, z0: number,
+    x1: number, y1: number, z1: number,
+    x2: number, y2: number, z2: number,
+    x3: number, y3: number, z3: number,
+    v0: number, v1: number
+  ) => {
+    posArr.push(x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, z3);
+    uvArr.push(0, v0, 1, v0, 0, v1, 1, v1);
+    const c = curRef.c;
+    idxArr.push(c, c + 1, c + 2, c + 2, c + 1, c + 3);
+    curRef.c += 4;
+  };
+
+  for (let i = 0; i < steps; i++) {
+    const t0 = i / steps;
+    const t1 = (i + 1) / steps;
+    const z0 = RAMP_BOTTOM_Z - t0 * (RAMP_BOTTOM_Z - RAMP_TOP_Z);
+    const z1 = RAMP_BOTTOM_Z - t1 * (RAMP_BOTTOM_Z - RAMP_TOP_Z);
+
+    const b0 = getRampBoundsAtZ(z0);
+    const b1 = getRampBoundsAtZ(z1);
+    const y0 = getRampElevationAtZ(z0) + 0.014;
+    const y1 = getRampElevationAtZ(z1) + 0.014;
+
+    const v0 = t0 * 5.0;
+    const v1 = t1 * 5.0;
+
+    deckPos.push(
+      b0.leftX, y0, z0,
+      b0.rightX, y0, z0,
+      b1.leftX, y1, z1,
+      b1.rightX, y1, z1
+    );
+    deckNorm.push(0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
+    deckUv.push(0, v0, 1, v0, 0, v1, 1, v1);
+    deckIdx.push(dCur, dCur + 1, dCur + 2, dCur + 2, dCur + 1, dCur + 3);
+    dCur += 4;
+
+    // Left retaining concrete wall (x = leftX - 0.45 .. leftX)
+    const lw0In = b0.leftX;
+    const lw0Out = b0.leftX - 0.50;
+    const lw1In = b1.leftX;
+    const lw1Out = b1.leftX - 0.50;
+    const lTop0 = y0 + 1.15;
+    const lTop1 = y1 + 1.15;
+    const lwRef = { c: lwCur };
+    pushWallQuad(
+      leftWallPos, leftWallUv, leftWallIdx, lwRef,
+      lw0Out, lTop0, z0, lw0In, lTop0, z0,
+      lw1Out, lTop1, z1, lw1In, lTop1, z1, v0, v1
+    );
+    pushWallQuad(
+      leftWallPos, leftWallUv, leftWallIdx, lwRef,
+      lw0In, 0, z0, lw0In, lTop0, z0,
+      lw1In, 0, z1, lw1In, lTop1, z1, v0, v1
+    );
+    pushWallQuad(
+      leftWallPos, leftWallUv, leftWallIdx, lwRef,
+      lw0Out, lTop0, z0, lw0Out, 0, z0,
+      lw1Out, lTop1, z1, lw1Out, 0, z1, v0, v1
+    );
+    lwCur = lwRef.c;
+
+    // Right retaining concrete wall (x = rightX .. rightX + 0.50)
+    const rw0In = b0.rightX;
+    const rw0Out = b0.rightX + 0.50;
+    const rw1In = b1.rightX;
+    const rw1Out = b1.rightX + 0.50;
+    const rwRef = { c: rwCur };
+    pushWallQuad(
+      rightWallPos, rightWallUv, rightWallIdx, rwRef,
+      rw0In, lTop0, z0, rw0Out, lTop0, z0,
+      rw1In, lTop1, z1, rw1Out, lTop1, z1, v0, v1
+    );
+    pushWallQuad(
+      rightWallPos, rightWallUv, rightWallIdx, rwRef,
+      rw0In, 0, z0, rw0In, lTop0, z0,
+      rw1In, 0, z1, rw1In, lTop1, z1, v0, v1
+    );
+    pushWallQuad(
+      rightWallPos, rightWallUv, rightWallIdx, rwRef,
+      rw0Out, lTop0, z0, rw0Out, 0, z0,
+      rw1Out, lTop1, z1, rw1Out, 0, z1, v0, v1
+    );
+    rwCur = rwRef.c;
+  }
+
+  const deckGeo = new THREE.BufferGeometry();
+  deckGeo.setAttribute('position', new THREE.Float32BufferAttribute(deckPos, 3));
+  deckGeo.setAttribute('normal', new THREE.Float32BufferAttribute(deckNorm, 3));
+  deckGeo.setAttribute('uv', new THREE.Float32BufferAttribute(deckUv, 2));
+  deckGeo.setIndex(deckIdx);
+  deckGeo.computeBoundingSphere();
+
+  const leftWallGeo = new THREE.BufferGeometry();
+  leftWallGeo.setAttribute('position', new THREE.Float32BufferAttribute(leftWallPos, 3));
+  leftWallGeo.setAttribute('uv', new THREE.Float32BufferAttribute(leftWallUv, 2));
+  leftWallGeo.setIndex(leftWallIdx);
+  leftWallGeo.computeVertexNormals();
+  leftWallGeo.computeBoundingSphere();
+
+  const rightWallGeo = new THREE.BufferGeometry();
+  rightWallGeo.setAttribute('position', new THREE.Float32BufferAttribute(rightWallPos, 3));
+  rightWallGeo.setAttribute('uv', new THREE.Float32BufferAttribute(rightWallUv, 2));
+  rightWallGeo.setIndex(rightWallIdx);
+  rightWallGeo.computeVertexNormals();
+  rightWallGeo.computeBoundingSphere();
+
+  // 2. Elevated Merge Taper Deck & Gore Chevron Markings (z = -122 .. -195 at y = 4.51)
+  const mPos = [
+    10.8, HIGHWAY_Y + 0.011, RAMP_TOP_Z,
+    20.8, HIGHWAY_Y + 0.011, RAMP_TOP_Z,
+    10.8, HIGHWAY_Y + 0.011, RAMP_MERGE_END_Z,
+    11.1, HIGHWAY_Y + 0.011, RAMP_MERGE_END_Z,
+  ];
+  const mNorm = [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0];
+  const mUv = [0, 0, 1, 0, 0, 2.2, 1, 2.2];
+  const mergeDeckGeo = new THREE.BufferGeometry();
+  mergeDeckGeo.setAttribute('position', new THREE.Float32BufferAttribute(mPos, 3));
+  mergeDeckGeo.setAttribute('normal', new THREE.Float32BufferAttribute(mNorm, 3));
+  mergeDeckGeo.setAttribute('uv', new THREE.Float32BufferAttribute(mUv, 2));
+  mergeDeckGeo.setIndex([0, 1, 2, 2, 1, 3]);
+  mergeDeckGeo.computeBoundingSphere();
+
+  // Right-side "Cebreado Blanco" gore strip tapering along outer merge edge
+  const gPos = [
+    17.6, HIGHWAY_Y + 0.020, RAMP_TOP_Z,
+    20.8, HIGHWAY_Y + 0.020, RAMP_TOP_Z,
+    10.85, HIGHWAY_Y + 0.020, RAMP_MERGE_END_Z + 18,
+    13.4, HIGHWAY_Y + 0.020, RAMP_MERGE_END_Z + 18,
+  ];
+  const gUv = [0, 0, 1, 0, 0, 2.5, 1, 2.5];
+  const mergeChevronGeo = new THREE.BufferGeometry();
+  mergeChevronGeo.setAttribute('position', new THREE.Float32BufferAttribute(gPos, 3));
+  mergeChevronGeo.setAttribute('normal', new THREE.Float32BufferAttribute(mNorm, 3));
+  mergeChevronGeo.setAttribute('uv', new THREE.Float32BufferAttribute(gUv, 2));
+  mergeChevronGeo.setIndex([0, 1, 2, 2, 1, 3]);
+  mergeChevronGeo.computeBoundingSphere();
+
+  // Tapered outer concrete barrier closing the merge zone from x = 21.05 at z = -122 to x = 11.35 at z = -195
+  const mwPos: number[] = [];
+  const mwUv: number[] = [];
+  const mwIdx: number[] = [];
+  const mwRef = { c: 0 };
+  const botY = HIGHWAY_Y - 0.72;
+  const topY = HIGHWAY_Y + 1.30;
+  pushWallQuad(
+    mwPos, mwUv, mwIdx, mwRef,
+    20.8, topY, RAMP_TOP_Z, 21.35, topY, RAMP_TOP_Z,
+    11.05, topY, RAMP_MERGE_END_Z, 11.65, topY, RAMP_MERGE_END_Z, 0, 2
+  );
+  pushWallQuad(
+    mwPos, mwUv, mwIdx, mwRef,
+    20.8, botY, RAMP_TOP_Z, 20.8, topY, RAMP_TOP_Z,
+    11.05, botY, RAMP_MERGE_END_Z, 11.05, topY, RAMP_MERGE_END_Z, 0, 2
+  );
+  pushWallQuad(
+    mwPos, mwUv, mwIdx, mwRef,
+    21.35, topY, RAMP_TOP_Z, 21.35, botY, RAMP_TOP_Z,
+    11.65, topY, RAMP_MERGE_END_Z, 11.65, botY, RAMP_MERGE_END_Z, 0, 2
+  );
+  const mergeOuterWallGeo = new THREE.BufferGeometry();
+  mergeOuterWallGeo.setAttribute('position', new THREE.Float32BufferAttribute(mwPos, 3));
+  mergeOuterWallGeo.setAttribute('uv', new THREE.Float32BufferAttribute(mwUv, 2));
+  mergeOuterWallGeo.setIndex(mwIdx);
+  mergeOuterWallGeo.computeVertexNormals();
+  mergeOuterWallGeo.computeBoundingSphere();
+
+  return {
+    deckGeo,
+    leftWallGeo,
+    rightWallGeo,
+    mergeDeckGeo,
+    mergeChevronGeo,
+    mergeOuterWallGeo,
+  };
+}
+
 export function buildMetropolisWorld(
   textures: ProceduralTextureSet,
   isSoftwareGl: boolean
@@ -492,11 +903,11 @@ export function buildMetropolisWorld(
   const track = createClosedLoopTrack();
 
   // ==================== 1. METROPOLIS URBAN GROUND ====================
-  const cityGroundGeo = new THREE.PlaneGeometry(2800, 2800);
+  const cityGroundGeo = new THREE.PlaneGeometry(3000, 3000);
   cityGroundGeo.rotateX(-Math.PI / 2);
   geometries.push(cityGroundGeo);
   const cityGroundMat = new THREE.MeshStandardMaterial({
-    color: 0x0a0d13,
+    color: 0x090c12,
     roughness: 0.92,
     metalness: 0.08,
   });
@@ -506,10 +917,27 @@ export function buildMetropolisWorld(
   cityGround.receiveShadow = true;
   group.add(cityGround);
 
-  // ==================== 2. CLOSED-LOOP TOKYO WANGAN EXPRESSWAY ====================
-  const roadSegments = 760;
-  const roadGeo = buildClosedTrackRibbonGeometry(track, roadSegments, -9.0, 9.0, 0.01, 36, false);
-  geometries.push(roadGeo);
+  // ==================== 2. ELEVATED CLOSED-LOOP HIGHWAY (Y = 4.5m) ====================
+  const roadSegments = 780;
+  const roadGeo = buildClosedTrackRibbonGeometry(
+    track,
+    roadSegments,
+    -11.0,
+    11.0,
+    HIGHWAY_Y + 0.01,
+    36,
+    false
+  );
+  const soffitGeo = buildClosedTrackRibbonGeometry(
+    track,
+    roadSegments,
+    -11.4,
+    11.4,
+    HIGHWAY_Y - 0.72,
+    36,
+    true
+  );
+  geometries.push(roadGeo, soffitGeo);
 
   const asphaltMat = new THREE.MeshPhysicalMaterial({
     map: textures.asphalt,
@@ -523,13 +951,6 @@ export function buildMetropolisWorld(
     clearcoatRoughness: 0.35,
     envMapIntensity: 0.85,
   });
-  materials.push(asphaltMat);
-
-  const roadMesh = new THREE.Mesh(roadGeo, asphaltMat);
-  roadMesh.receiveShadow = true;
-  group.add(roadMesh);
-
-  // Continuous Concrete Acoustic Barriers + LED Strips
   const concreteMat = new THREE.MeshStandardMaterial({
     map: textures.concreteBarrier,
     color: 0x64748b,
@@ -537,137 +958,447 @@ export function buildMetropolisWorld(
     metalness: 0.12,
   });
   const barrierLedMat = new THREE.MeshStandardMaterial({
-    color: 0xe2e8f0,
+    color: 0xdbe4f0,
     emissive: new THREE.Color(0xfde68a),
-    emissiveIntensity: 0.72,
-    roughness: 0.3,
+    emissiveIntensity: 0.32,
+    roughness: 0.35,
   });
-  materials.push(concreteMat, barrierLedMat);
+  materials.push(asphaltMat, concreteMat, barrierLedMat);
 
-  const leftWallGeo = buildClosedTrackWallGeometry(track, roadSegments, -9.3, 0.55, 0, 1.35, 24, false);
-  const leftLedGeo = buildClosedTrackWallGeometry(track, roadSegments, -9.0, 0.09, 1.04, 1.12, 24, false);
-  const rightWallGeo = buildClosedTrackWallGeometry(track, roadSegments, 9.3, 0.55, 0, 1.35, 24, true);
-  const rightLedGeo = buildClosedTrackWallGeometry(track, roadSegments, 9.0, 0.09, 1.04, 1.12, 24, true);
-  geometries.push(leftWallGeo, leftLedGeo, rightWallGeo, rightLedGeo);
+  const roadMesh = new THREE.Mesh(roadGeo, asphaltMat);
+  roadMesh.receiveShadow = true;
+  const soffitMesh = new THREE.Mesh(soffitGeo, concreteMat);
+  group.add(roadMesh, soffitMesh);
 
-  const leftWallMesh = new THREE.Mesh(leftWallGeo, concreteMat);
-  const leftLedMesh = new THREE.Mesh(leftLedGeo, barrierLedMat);
-  const rightWallMesh = new THREE.Mesh(rightWallGeo, concreteMat);
-  const rightLedMesh = new THREE.Mesh(rightLedGeo, barrierLedMat);
-  group.add(leftWallMesh, leftLedMesh, rightWallMesh, rightLedMesh);
+  // Outer Acoustic Walls + Viaduct Deck Facias + LED Strips
+  const leftWallGeo = buildClosedTrackWallGeometry(
+    track,
+    roadSegments,
+    -11.35,
+    0.65,
+    HIGHWAY_Y - 0.72,
+    HIGHWAY_Y + 1.30,
+    24,
+    false
+  );
+  const leftLedGeo = buildClosedTrackWallGeometry(
+    track,
+    roadSegments,
+    -11.0,
+    0.09,
+    HIGHWAY_Y + 0.96,
+    HIGHWAY_Y + 1.05,
+    24,
+    false
+  );
+  const rightWallGeo = buildClosedTrackWallGeometry(
+    track,
+    roadSegments,
+    11.35,
+    0.65,
+    HIGHWAY_Y - 0.72,
+    HIGHWAY_Y + 1.30,
+    24,
+    true
+  );
+  const rightLedGeo = buildClosedTrackWallGeometry(
+    track,
+    roadSegments,
+    11.0,
+    0.09,
+    HIGHWAY_Y + 0.96,
+    HIGHWAY_Y + 1.05,
+    24,
+    true
+  );
+  // Center Median Barrier with 5 Open Crossover Gaps!
+  const centerMedianGeo = buildClosedTrackWallGeometry(
+    track,
+    roadSegments,
+    0,
+    0.84,
+    HIGHWAY_Y,
+    HIGHWAY_Y + 0.68,
+    24,
+    false,
+    true
+  );
+  geometries.push(leftWallGeo, leftLedGeo, rightWallGeo, rightLedGeo, centerMedianGeo);
 
-  // ==================== 3. SHARED PARKING + TALLER (LEFT) + CONCESIONARIO (RIGHT) ====================
+  group.add(
+    new THREE.Mesh(leftWallGeo, concreteMat),
+    new THREE.Mesh(leftLedGeo, barrierLedMat),
+    new THREE.Mesh(rightWallGeo, concreteMat),
+    new THREE.Mesh(rightLedGeo, barrierLedMat),
+    new THREE.Mesh(centerMedianGeo, concreteMat)
+  );
+
+  // Instanced Reflective Median Delineator Blocks along Center Divider
+  const sample: TrackSample = { x: 0, z: 0, tx: 0, tz: -1, rx: 1, rz: 0, yaw: 0, s: 0 };
+  const dummy = new THREE.Object3D();
+  const reflectorSList: number[] = [];
+  for (let s = 8; s < track.totalLength; s += 14) {
+    if (!track.isInMedianOpening(s)) {
+      reflectorSList.push(s);
+    }
+  }
+  const reflectorGeo = new THREE.BoxGeometry(0.92, 0.14, 0.28);
+  const reflectorMat = new THREE.MeshStandardMaterial({
+    color: 0xfef3c7,
+    emissive: new THREE.Color(0xf59e0b),
+    emissiveIntensity: 0.45,
+    roughness: 0.28,
+  });
+  geometries.push(reflectorGeo);
+  materials.push(reflectorMat);
+  const reflectorInst = new THREE.InstancedMesh(
+    reflectorGeo,
+    reflectorMat,
+    reflectorSList.length
+  );
+  reflectorSList.forEach((rs, idx) => {
+    track.sampleAtS(rs, sample);
+    dummy.position.set(sample.x, HIGHWAY_Y + 0.74, sample.z);
+    dummy.rotation.set(0, sample.yaw, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    reflectorInst.setMatrixAt(idx, dummy.matrix);
+  });
+  reflectorInst.instanceMatrix.needsUpdate = true;
+  reflectorInst.computeBoundingSphere();
+  group.add(reflectorInst);
+
+  // Instanced Arrow Signs at Both Ends of Every Median Opening
+  const medianPostGeo = new THREE.CylinderGeometry(0.08, 0.10, 3.1, 8);
+  const medianSignGeo = new THREE.PlaneGeometry(2.1, 1.05);
+  const medianSignMat = new THREE.MeshStandardMaterial({
+    map: textures.medianSign,
+    emissiveMap: textures.medianSign,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.25,
+    side: THREE.DoubleSide,
+    roughness: 0.38,
+  });
+  const gantrySteelMat = new THREE.MeshStandardMaterial({
+    color: 0x334155,
+    metalness: 0.78,
+    roughness: 0.32,
+  });
+  geometries.push(medianPostGeo, medianSignGeo);
+  materials.push(medianSignMat, gantrySteelMat);
+
+  const medEdges: number[] = [];
+  for (const mo of track.medianOpenings) {
+    medEdges.push(mo.startS, mo.endS);
+  }
+  const medPostInst = new THREE.InstancedMesh(medianPostGeo, gantrySteelMat, medEdges.length);
+  const medSignInst = new THREE.InstancedMesh(medianSignGeo, medianSignMat, medEdges.length);
+  medEdges.forEach((edgeS, idx) => {
+    track.sampleAtS(edgeS, sample);
+    dummy.scale.set(1, 1, 1);
+    dummy.rotation.set(0, 0, 0);
+    dummy.position.set(sample.x, HIGHWAY_Y + 1.55, sample.z);
+    dummy.updateMatrix();
+    medPostInst.setMatrixAt(idx, dummy.matrix);
+
+    dummy.rotation.set(0, sample.yaw, 0);
+    dummy.position.set(sample.x, HIGHWAY_Y + 2.85, sample.z);
+    dummy.updateMatrix();
+    medSignInst.setMatrixAt(idx, dummy.matrix);
+  });
+  medPostInst.instanceMatrix.needsUpdate = true;
+  medSignInst.instanceMatrix.needsUpdate = true;
+  medPostInst.computeBoundingSphere();
+  medSignInst.computeBoundingSphere();
+  group.add(medPostInst, medSignInst);
+
+  // Instanced Concrete Viaduct T-Piers supporting the Elevated Loop
+  const pierSList: number[] = [];
+  for (let s = 18; s < track.totalLength; s += 46) {
+    pierSList.push(s);
+  }
+  const pierColGeo = new THREE.BoxGeometry(2.2, HIGHWAY_Y - 0.65, 1.7);
+  const pierCapGeo = new THREE.BoxGeometry(21.0, 0.72, 1.9);
+  geometries.push(pierColGeo, pierCapGeo);
+  const pierColInst = new THREE.InstancedMesh(pierColGeo, concreteMat, pierSList.length);
+  const pierCapInst = new THREE.InstancedMesh(pierCapGeo, concreteMat, pierSList.length);
+  pierSList.forEach((ps, i) => {
+    track.sampleAtS(ps, sample);
+    dummy.rotation.set(0, sample.yaw, 0);
+    dummy.scale.set(1, 1, 1);
+
+    dummy.position.set(sample.x, (HIGHWAY_Y - 0.65) * 0.5, sample.z);
+    dummy.updateMatrix();
+    pierColInst.setMatrixAt(i, dummy.matrix);
+
+    dummy.position.set(sample.x, HIGHWAY_Y - 0.38, sample.z);
+    dummy.updateMatrix();
+    pierCapInst.setMatrixAt(i, dummy.matrix);
+  });
+  pierColInst.instanceMatrix.needsUpdate = true;
+  pierCapInst.instanceMatrix.needsUpdate = true;
+  pierColInst.computeBoundingSphere();
+  pierCapInst.computeBoundingSphere();
+  group.add(pierColInst, pierCapInst);
+
+  // ==================== 3. INCORPORATION RAMP WITH WHITE DIAGONAL CHEVRONS ("CEBREADO BLANCO") ====================
+  const rampGeos = buildIncorporationRampGeometries();
+  geometries.push(
+    rampGeos.deckGeo,
+    rampGeos.leftWallGeo,
+    rampGeos.rightWallGeo,
+    rampGeos.mergeDeckGeo,
+    rampGeos.mergeChevronGeo,
+    rampGeos.mergeOuterWallGeo
+  );
+
+  const rampDeckMat = new THREE.MeshPhysicalMaterial({
+    map: textures.rampChevronRoad,
+    bumpMap: textures.asphaltBump,
+    bumpScale: 0.015,
+    color: 0x333c4d,
+    roughness: 0.70,
+    metalness: 0.14,
+    clearcoat: 0.16,
+  });
+  const goreOverlayMat = new THREE.MeshBasicMaterial({
+    map: textures.goreChevronTex,
+    transparent: true,
+    opacity: 0.92,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  });
+  materials.push(rampDeckMat, goreOverlayMat);
+
+  const rampDeckMesh = new THREE.Mesh(rampGeos.deckGeo, rampDeckMat);
+  rampDeckMesh.receiveShadow = true;
+  const rampMergeDeckMesh = new THREE.Mesh(rampGeos.mergeDeckGeo, asphaltMat);
+  rampMergeDeckMesh.receiveShadow = true;
+  const rampGoreChevronMesh = new THREE.Mesh(rampGeos.mergeChevronGeo, goreOverlayMat);
+
+  group.add(
+    rampDeckMesh,
+    new THREE.Mesh(rampGeos.leftWallGeo, concreteMat),
+    new THREE.Mesh(rampGeos.rightWallGeo, concreteMat),
+    rampMergeDeckMesh,
+    rampGoreChevronMesh,
+    new THREE.Mesh(rampGeos.mergeOuterWallGeo, concreteMat)
+  );
+
+  // ==================== 4. LANDSCAPED EMBANKMENTS ("TALUDES") & URBAN VEGETATION ====================
+  const taludLGeo = buildSlopedEmbankmentGeometry(track, 240, -11.7, -21.5, HIGHWAY_Y - 0.4, -0.05);
+  const taludRGeo = buildSlopedEmbankmentGeometry(track, 240, 11.7, 21.5, HIGHWAY_Y - 0.4, -0.05);
+  const taludMat = new THREE.MeshStandardMaterial({
+    color: 0x16241b,
+    roughness: 0.94,
+    metalness: 0.04,
+  });
+  geometries.push(taludLGeo, taludRGeo);
+  materials.push(taludMat);
+  const taludLMesh = new THREE.Mesh(taludLGeo, taludMat);
+  const taludRMesh = new THREE.Mesh(taludRGeo, taludMat);
+  taludLMesh.receiveShadow = true;
+  taludRMesh.receiveShadow = true;
+  group.add(taludLMesh, taludRMesh);
+
+  // Instanced Stylized Trees along Taludes & Roadside Parks
+  const treeCoords: Array<{ x: number; z: number; y: number; s: number; tint: number }> = [];
+  let tSeed = 0;
+  for (let s = 20; s < track.totalLength; s += 26) {
+    track.sampleAtS(s, sample);
+    for (const side of [-1, 1] as const) {
+      tSeed++;
+      const dist = 16.5 + (tSeed % 5) * 1.1;
+      const tx = sample.x + sample.rx * side * dist;
+      const tz = sample.z + sample.rz * side * dist;
+      // Exclude Parking, Paddock, Complex, Lush Backdrop Trees, and Ramp footprint
+      if (tx > 6 && tx < 88 && tz > -205 && tz < 48) continue;
+      if (track.minDistanceToTrack(tx, tz) < 13.5) continue;
+      const slopeY = THREE.MathUtils.clamp((21.5 - dist) * 0.35, 0.1, 2.2);
+      const scale = 0.85 + ((tSeed * 19) % 32) / 100;
+      treeCoords.push({ x: tx, z: tz, y: slopeY, s: scale, tint: tSeed % 3 });
+    }
+  }
+
+  const trunkGeo = new THREE.CylinderGeometry(0.16, 0.24, 1.8, 7);
+  const canopyGeo = new THREE.ConeGeometry(1.55, 4.0, 9);
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x3b2f27, roughness: 0.92 });
+  const canopyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 });
+  geometries.push(trunkGeo, canopyGeo);
+  materials.push(trunkMat, canopyMat);
+
+  const trunkInst = new THREE.InstancedMesh(trunkGeo, trunkMat, treeCoords.length);
+  const canopyInst = new THREE.InstancedMesh(canopyGeo, canopyMat, treeCoords.length);
+  const canopyPalette = [
+    new THREE.Color(0x163826),
+    new THREE.Color(0x1e4a31),
+    new THREE.Color(0x143022),
+  ];
+
+  treeCoords.forEach((tc, i) => {
+    dummy.rotation.set(0, (i * 0.7) % Math.PI, 0);
+    dummy.scale.set(tc.s, tc.s, tc.s);
+    dummy.position.set(tc.x, tc.y + 0.9 * tc.s, tc.z);
+    dummy.updateMatrix();
+    trunkInst.setMatrixAt(i, dummy.matrix);
+
+    dummy.position.set(tc.x, tc.y + 3.2 * tc.s, tc.z);
+    dummy.updateMatrix();
+    canopyInst.setMatrixAt(i, dummy.matrix);
+    canopyInst.setColorAt(i, canopyPalette[tc.tint]);
+  });
+  trunkInst.instanceMatrix.needsUpdate = true;
+  canopyInst.instanceMatrix.needsUpdate = true;
+  if (canopyInst.instanceColor) canopyInst.instanceColor.needsUpdate = true;
+  trunkInst.computeBoundingSphere();
+  canopyInst.computeBoundingSphere();
+  group.add(trunkInst, canopyInst);
+
+  // ==================== 5. COMPLEX: GHOST GARAGE (78) + CONNECTED VIP CONCESIONARIO + PADDOCK LOBBY ====================
   const parkingComplexGroup = new THREE.Group();
   group.add(parkingComplexGroup);
 
-  // 21.2m x 28m Parking Asphalt Pad (x = 9.0..30.2, z = -16.5..+11.5) flush with Home Straight edge x = 9.0
-  const parkPadGeo = new THREE.PlaneGeometry(21.2, 28.0);
-  parkPadGeo.rotateX(-Math.PI / 2);
   const parkPadMat = new THREE.MeshPhysicalMaterial({
     map: textures.parkingAsphalt,
     bumpMap: textures.asphaltBump,
-    bumpScale: 0.014,
-    roughness: 0.68,
+    bumpScale: 0.016,
+    roughness: 0.66,
     metalness: 0.14,
     clearcoat: 0.22,
     clearcoatRoughness: 0.3,
   });
-  geometries.push(parkPadGeo);
   materials.push(parkPadMat);
-  const parkPad = new THREE.Mesh(parkPadGeo, parkPadMat);
-  parkPad.position.set(19.6, 0.013, -2.5);
-  parkPad.receiveShadow = true;
-  parkingComplexGroup.add(parkPad);
 
-  // Wide direct connector road/ramp with Crosswalk (Paso de Cebra) bridging Parking x=11.0 to Highway x=8.2
-  const connectorGeo = new THREE.PlaneGeometry(3.2, 26.8);
-  connectorGeo.rotateX(-Math.PI / 2);
-  const connectorMat = new THREE.MeshPhysicalMaterial({
+  // Expanded Worn Asphalt Paddock Forecourt (x = 22 .. 68, z = -2 .. 30)
+  const parkPadGeo = new THREE.PlaneGeometry(46.0, 32.0);
+  parkPadGeo.rotateX(-Math.PI / 2);
+  // Access Street Apron connecting Ramp bottom (z=+8, x=12..22) to Parking Open Gate (x=22, z=+8..+28)
+  const accessApronGeo = new THREE.PlaneGeometry(10.0, 22.0);
+  accessApronGeo.rotateX(-Math.PI / 2);
+  const crosswalkApronGeo = new THREE.PlaneGeometry(3.2, 14.0);
+  crosswalkApronGeo.rotateX(-Math.PI / 2);
+  const accessApronMat = new THREE.MeshPhysicalMaterial({
     map: textures.crosswalkRoad,
     bumpMap: textures.asphaltBump,
     bumpScale: 0.014,
     roughness: 0.65,
     metalness: 0.14,
   });
-  geometries.push(connectorGeo);
-  materials.push(connectorMat);
-  const connectorRoad = new THREE.Mesh(connectorGeo, connectorMat);
-  connectorRoad.position.set(9.8, 0.0155, -2.5);
-  connectorRoad.receiveShadow = true;
-  parkingComplexGroup.add(connectorRoad);
+  geometries.push(parkPadGeo, accessApronGeo, crosswalkApronGeo);
+  materials.push(accessApronMat);
 
-  // Steel Guardrails (Guardarrail) flanking the Parking-to-Highway mouth edges
-  const guardrailRailGeo = new THREE.BoxGeometry(3.6, 0.24, 0.12);
-  const guardrailPostGeo = new THREE.BoxGeometry(0.12, 0.82, 0.12);
-  const guardrailMat = new THREE.MeshStandardMaterial({
+  const parkPad = new THREE.Mesh(parkPadGeo, parkPadMat);
+  parkPad.position.set(45.0, 0.013, 14.0);
+  parkPad.receiveShadow = true;
+
+  const accessApron = new THREE.Mesh(accessApronGeo, parkPadMat);
+  accessApron.position.set(17.0, 0.012, 19.0);
+  accessApron.receiveShadow = true;
+
+  const crosswalkApron = new THREE.Mesh(crosswalkApronGeo, accessApronMat);
+  crosswalkApron.position.set(21.0, 0.015, 18.0);
+  crosswalkApron.receiveShadow = true;
+  parkingComplexGroup.add(parkPad, accessApron, crosswalkApron);
+
+  // Concrete Retaining Wall on West edge of Bottom Apron & Curb
+  const apronLeftWallGeo = new THREE.BoxGeometry(0.5, 1.25, 22.5);
+  const southCurbGeo = new THREE.BoxGeometry(56.5, 0.28, 0.5);
+  geometries.push(apronLeftWallGeo, southCurbGeo);
+  const apronLeftWall = new THREE.Mesh(apronLeftWallGeo, concreteMat);
+  apronLeftWall.position.set(11.75, 0.62, 19.0);
+  const southCurb = new THREE.Mesh(southCurbGeo, concreteMat);
+  southCurb.position.set(40.0, 0.14, 30.1);
+  parkingComplexGroup.add(apronLeftWall, southCurb);
+
+  // Low Metallic Barrier separating Parking (x=22.0) from Access Ramp/Street, with WIDE 14m Open Gate (z = 11..25)
+  const metalBarrierMat = new THREE.MeshStandardMaterial({
     color: 0x94a3b8,
-    metalness: 0.78,
-    roughness: 0.34,
+    metalness: 0.80,
+    roughness: 0.30,
   });
-  geometries.push(guardrailRailGeo, guardrailPostGeo);
-  materials.push(guardrailMat);
-  for (const gz of [-16.1, 11.2]) {
-    const rail = new THREE.Mesh(guardrailRailGeo, guardrailMat);
-    rail.position.set(10.8, 0.62, gz);
-    parkingComplexGroup.add(rail);
-    for (const px of [9.4, 10.8, 12.2]) {
-      const post = new THREE.Mesh(guardrailPostGeo, guardrailMat);
-      post.position.set(px, 0.41, gz);
-      parkingComplexGroup.add(post);
-    }
-  }
-
-  // Barrier end bollards at z = -16.0 and z = +11.2 so driver sees the exact open mouth cleanly
-  const bollardGeo = new THREE.CylinderGeometry(0.22, 0.26, 1.45, 12);
+  const barrierPostGeo = new THREE.BoxGeometry(0.14, 0.85, 0.14);
+  const northRailGeo = new THREE.BoxGeometry(0.14, 0.26, 13.0);
+  const southRailGeo = new THREE.BoxGeometry(0.14, 0.26, 4.5);
+  const bollardGeo = new THREE.CylinderGeometry(0.22, 0.26, 1.35, 12);
   const bollardMat = new THREE.MeshStandardMaterial({
     color: 0x2563eb,
     emissive: new THREE.Color(0x3b82f6),
-    emissiveIntensity: 0.75,
-    roughness: 0.35,
+    emissiveIntensity: 0.30,
+    roughness: 0.40,
   });
-  geometries.push(bollardGeo);
-  materials.push(bollardMat);
-  for (const bz of [-16.1, 11.2]) {
+  geometries.push(barrierPostGeo, northRailGeo, southRailGeo, bollardGeo);
+  materials.push(metalBarrierMat, bollardMat);
+
+  const northRail = new THREE.Mesh(northRailGeo, metalBarrierMat);
+  northRail.position.set(22.0, 0.62, 4.5);
+  const southRail = new THREE.Mesh(southRailGeo, metalBarrierMat);
+  southRail.position.set(22.0, 0.62, 27.3);
+  parkingComplexGroup.add(northRail, southRail);
+
+  const barrierPostZs = [-1.5, 1.5, 4.5, 7.5, 10.6, 25.4, 29.4];
+  const barrierPostInst = new THREE.InstancedMesh(
+    barrierPostGeo,
+    metalBarrierMat,
+    barrierPostZs.length
+  );
+  barrierPostZs.forEach((pz, i) => {
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.position.set(22.0, 0.42, pz);
+    dummy.updateMatrix();
+    barrierPostInst.setMatrixAt(i, dummy.matrix);
+  });
+  barrierPostInst.instanceMatrix.needsUpdate = true;
+  barrierPostInst.computeBoundingSphere();
+  parkingComplexGroup.add(barrierPostInst);
+
+  for (const bz of [10.9, 25.1]) {
     const bollard = new THREE.Mesh(bollardGeo, bollardMat);
-    bollard.position.set(9.1, 0.72, bz);
+    bollard.position.set(22.0, 0.68, bz);
     parkingComplexGroup.add(bollard);
   }
 
-  // South concrete curb
-  const curbGeo = new THREE.BoxGeometry(20.8, 0.24, 0.45);
-  geometries.push(curbGeo);
-  const curbSouth = new THREE.Mesh(curbGeo, concreteMat);
-  curbSouth.position.set(20.0, 0.12, 11.4);
-  parkingComplexGroup.add(curbSouth);
-
-  // Shared materials
+  // Shared Building Materials
   const steelBlackMat = new THREE.MeshStandardMaterial({
     color: 0x0d1016,
-    roughness: 0.58,
-    metalness: 0.55,
+    roughness: 0.56,
+    metalness: 0.58,
   });
   const darkWallMat = new THREE.MeshStandardMaterial({
     color: 0x090b10,
-    roughness: 0.78,
-    metalness: 0.25,
+    roughness: 0.82,
+    metalness: 0.22,
   });
   const liftRedMat = new THREE.MeshStandardMaterial({
-    color: 0xb91c1c,
+    color: 0xdc2626,
+    roughness: 0.34,
+    metalness: 0.42,
+  });
+  const redAccentMat = new THREE.MeshStandardMaterial({
+    color: 0xef4444,
+    emissive: new THREE.Color(0xdc2626),
+    emissiveIntensity: 0.22,
     roughness: 0.35,
-    metalness: 0.45,
+  });
+  const whiteTrimMat = new THREE.MeshStandardMaterial({
+    color: 0xcbd5e1,
+    roughness: 0.54,
+    metalness: 0.08,
   });
   const ledStripMat = new THREE.MeshStandardMaterial({
     color: 0xe2e8f0,
-    emissive: new THREE.Color(0xe2e8f0),
-    emissiveIntensity: 0.85,
-    roughness: 0.2,
+    emissive: new THREE.Color(0xdbeafe),
+    emissiveIntensity: 0.36,
+    roughness: 0.28,
   });
   const glassFacadeMat = new THREE.MeshPhysicalMaterial({
-    color: 0x0d1726,
+    color: 0x0f1d32,
     transparent: true,
-    opacity: 0.2,
+    opacity: 0.22,
     roughness: 0.04,
-    metalness: 0.15,
+    metalness: 0.16,
     clearcoat: 1.0,
     clearcoatRoughness: 0.03,
     depthWrite: false,
@@ -681,24 +1412,41 @@ export function buildMetropolisWorld(
     clearcoat: 0.80,
     clearcoatRoughness: 0.18,
   });
-  const showcaseFloorMat = new THREE.MeshPhysicalMaterial({
-    map: textures.showroomFloor,
-    roughnessMap: textures.showroomFloorRoughness,
-    color: 0x161b24,
-    roughness: 0.16,
-    metalness: 0.45,
-    clearcoat: 0.92,
-    clearcoatRoughness: 0.1,
+  const woodFloorMat = new THREE.MeshPhysicalMaterial({
+    map: textures.woodFloor,
+    roughnessMap: textures.woodFloorRoughness,
+    color: 0xffffff,
+    roughness: 0.34,
+    metalness: 0.08,
+    clearcoat: 0.65,
+    clearcoatRoughness: 0.22,
   });
-  const bayTriggerMat = new THREE.MeshBasicMaterial({
-    color: 0x2563eb,
+  const bayCyanRingMat = new THREE.MeshBasicMaterial({
+    color: 0x22d3ee,
     transparent: true,
-    opacity: 0.86,
+    opacity: 0.92,
+    side: THREE.DoubleSide,
   });
-  const bayFloorFillMat = new THREE.MeshBasicMaterial({
-    color: 0x3b82f6,
+  const bayCyanFillMat = new THREE.MeshBasicMaterial({
+    map: textures.underglowRadial,
+    color: 0x06b6d4,
     transparent: true,
-    opacity: 0.12,
+    opacity: 0.24,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const greenBoxMat = new THREE.MeshBasicMaterial({
+    color: 0x22c55e,
+    transparent: true,
+    opacity: 0.92,
+    side: THREE.DoubleSide,
+  });
+  const greenFillMat = new THREE.MeshBasicMaterial({
+    map: textures.underglowRadial,
+    color: 0x16a34a,
+    transparent: true,
+    opacity: 0.32,
+    blending: THREE.AdditiveBlending,
     depthWrite: false,
   });
   const plinthMat = new THREE.MeshPhysicalMaterial({
@@ -708,44 +1456,51 @@ export function buildMetropolisWorld(
     clearcoat: 0.85,
   });
   const plinthTrimMat = new THREE.MeshStandardMaterial({
-    color: 0xe2e8f0,
+    color: 0xcbd5e1,
     emissive: new THREE.Color(0x94a3b8),
-    emissiveIntensity: 0.65,
+    emissiveIntensity: 0.22,
   });
   materials.push(
     steelBlackMat,
     darkWallMat,
     liftRedMat,
+    redAccentMat,
+    whiteTrimMat,
     ledStripMat,
     glassFacadeMat,
     tallerFloorMat,
-    showcaseFloorMat,
-    bayTriggerMat,
-    bayFloorFillMat,
+    woodFloorMat,
+    bayCyanRingMat,
+    bayCyanFillMat,
+    greenBoxMat,
+    greenFillMat,
     plinthMat,
     plinthTrimMat
   );
 
-  // --- A) LEFT SIDE OF PARKING: TALLER DE TUNEO (3 drivable bays at x = 12.5, 17.5, 22.5, z = -23.5..-16.5) ---
-  const hangarFloorGeo = new THREE.PlaneGeometry(15.6, 7.6);
+  // --- A) LEFT SIDE OF COMPLEX: TALLER "78 GHOST GARAGE" ---
+  // Spans x = 22.0 .. 38.0 (width 16.0m), z = -13.6 .. -2.0 (depth 11.6m), facing +Z toward Parking
+  const hangarFloorGeo = new THREE.PlaneGeometry(16.0, 11.6);
   hangarFloorGeo.rotateX(-Math.PI / 2);
-  const hangarRoofGeo = new THREE.BoxGeometry(15.6, 0.38, 7.6);
-  const hangarBackGeo = new THREE.BoxGeometry(15.6, 4.9, 0.32);
-  const hangarSideGeo = new THREE.BoxGeometry(0.32, 4.9, 7.6);
-  const columnGeo = new THREE.BoxGeometry(0.28, 4.8, 0.28);
-  const fasciaGeo = new THREE.BoxGeometry(15.6, 0.9, 0.28);
-  const ledStripGeo = new THREE.BoxGeometry(0.18, 0.06, 5.6);
+  const hangarRoofGeo = new THREE.BoxGeometry(16.0, 0.42, 11.6);
+  const hangarBackGeo = new THREE.BoxGeometry(16.0, 5.2, 0.34);
+  const hangarSideGeo = new THREE.BoxGeometry(0.34, 5.2, 11.6);
+  const columnGeo = new THREE.BoxGeometry(0.32, 5.1, 0.32);
+  const colRedStripeGeo = new THREE.BoxGeometry(0.08, 4.3, 0.04);
+  const fasciaGeo = new THREE.BoxGeometry(16.0, 1.25, 0.36);
+  const shutterRollGeo = new THREE.BoxGeometry(4.5, 0.36, 0.38);
+  const wheelStopGeo = new THREE.CapsuleGeometry(0.11, 0.56, 6, 10);
+  wheelStopGeo.rotateZ(Math.PI / 2);
+  const ledPanelGeo = new THREE.BoxGeometry(1.15, 0.06, 2.1);
   const liftPostGeo = new THREE.BoxGeometry(0.18, 2.75, 0.22);
   const liftArmGeo = new THREE.BoxGeometry(0.75, 0.08, 0.12);
   const cartGeo = new THREE.BoxGeometry(0.85, 0.92, 0.52);
   const stackTireGeo = new THREE.TorusGeometry(0.28, 0.11, 10, 18);
   stackTireGeo.rotateX(Math.PI / 2);
-  const bayZonePadGeo = new THREE.PlaneGeometry(3.2, 5.4);
-  bayZonePadGeo.rotateX(-Math.PI / 2);
-  const bayEdgeZGeo = new THREE.PlaneGeometry(0.08, 5.4);
-  bayEdgeZGeo.rotateX(-Math.PI / 2);
-  const bayEdgeXGeo = new THREE.PlaneGeometry(3.2, 0.08);
-  bayEdgeXGeo.rotateX(-Math.PI / 2);
+  const bayRingGeo = new THREE.RingGeometry(1.55, 1.72, 36);
+  bayRingGeo.rotateX(-Math.PI / 2);
+  const bayGlowDiskGeo = new THREE.PlaneGeometry(4.1, 4.1);
+  bayGlowDiskGeo.rotateX(-Math.PI / 2);
 
   geometries.push(
     hangarFloorGeo,
@@ -753,127 +1508,272 @@ export function buildMetropolisWorld(
     hangarBackGeo,
     hangarSideGeo,
     columnGeo,
+    colRedStripeGeo,
     fasciaGeo,
-    ledStripGeo,
+    shutterRollGeo,
+    wheelStopGeo,
+    ledPanelGeo,
     liftPostGeo,
     liftArmGeo,
     cartGeo,
     stackTireGeo,
-    bayZonePadGeo,
-    bayEdgeZGeo,
-    bayEdgeXGeo
+    bayRingGeo,
+    bayGlowDiskGeo
   );
 
   const hangarGroup = new THREE.Group();
   parkingComplexGroup.add(hangarGroup);
 
   const hangarFloor = new THREE.Mesh(hangarFloorGeo, tallerFloorMat);
-  hangarFloor.position.set(17.5, 0.015, -20.2);
+  hangarFloor.position.set(30.0, 0.015, -7.8);
   hangarFloor.receiveShadow = true;
   const hangarRoof = new THREE.Mesh(hangarRoofGeo, steelBlackMat);
-  hangarRoof.position.set(17.5, 4.85, -20.2);
+  hangarRoof.position.set(30.0, 5.25, -7.8);
   const hangarBack = new THREE.Mesh(hangarBackGeo, darkWallMat);
-  hangarBack.position.set(17.5, 2.45, -23.9);
+  hangarBack.position.set(30.0, 2.6, -13.5);
   const hangarLeft = new THREE.Mesh(hangarSideGeo, darkWallMat);
-  hangarLeft.position.set(9.85, 2.45, -20.2);
-  const hangarRight = new THREE.Mesh(hangarSideGeo, darkWallMat);
-  hangarRight.position.set(25.15, 2.45, -20.2);
-  const hangarFascia = new THREE.Mesh(fasciaGeo, steelBlackMat);
-  hangarFascia.position.set(17.5, 4.45, -16.5);
-  hangarGroup.add(hangarFloor, hangarRoof, hangarBack, hangarLeft, hangarRight, hangarFascia);
+  hangarLeft.position.set(22.15, 2.6, -7.8);
+  const hangarFascia = new THREE.Mesh(fasciaGeo, darkWallMat);
+  hangarFascia.position.set(30.0, 4.75, -2.0);
+  hangarGroup.add(hangarFloor, hangarRoof, hangarBack, hangarLeft, hangarFascia);
 
-  for (const cx of [10.0, 15.0, 20.0, 25.0]) {
+  // Dividing Wall between Taller & Concesionario (x = 38.0) with OPEN INTERIOR DOORWAY (z = -9.8..-6.2)
+  const divWallBackGeo = new THREE.BoxGeometry(0.32, 5.2, 3.8);
+  const divWallFrontGeo = new THREE.BoxGeometry(0.32, 5.2, 4.2);
+  const divDoorHeaderGeo = new THREE.BoxGeometry(0.32, 2.1, 3.6);
+  const divGlassPartitionGeo = new THREE.PlaneGeometry(3.6, 3.0);
+  divGlassPartitionGeo.rotateY(Math.PI / 2);
+  geometries.push(divWallBackGeo, divWallFrontGeo, divDoorHeaderGeo, divGlassPartitionGeo);
+
+  const divWallBack = new THREE.Mesh(divWallBackGeo, darkWallMat);
+  divWallBack.position.set(38.0, 2.6, -11.7);
+  const divWallFront = new THREE.Mesh(divWallFrontGeo, darkWallMat);
+  divWallFront.position.set(38.0, 2.6, -4.1);
+  const divDoorHeader = new THREE.Mesh(divDoorHeaderGeo, darkWallMat);
+  divDoorHeader.position.set(38.0, 4.15, -8.0);
+  const divGlassWin = new THREE.Mesh(divGlassPartitionGeo, glassFacadeMat);
+  divGlassWin.position.set(38.0, 1.65, -4.1);
+  hangarGroup.add(divWallBack, divWallFront, divDoorHeader, divGlassWin);
+
+  // Exterior Matte-Black Columns with Vertical Red Stripes
+  for (const cx of [22.2, 27.4, 32.6, 37.8]) {
     const col = new THREE.Mesh(columnGeo, steelBlackMat);
-    col.position.set(cx, 2.4, -16.5);
-    hangarGroup.add(col);
+    col.position.set(cx, 2.55, -2.0);
+    const stripe = new THREE.Mesh(colRedStripeGeo, redAccentMat);
+    stripe.position.set(cx, 2.25, -1.83);
+    hangarGroup.add(col, stripe);
   }
 
-  const hangarSignGeo = new THREE.PlaneGeometry(5.8, 1.35);
+  // Left-side Steel Staircase + Mezzanine Loft ("Altillo") inside Taller
+  const loftDeckGeo = new THREE.BoxGeometry(3.1, 0.16, 3.2);
+  const loftRailGeo = new THREE.BoxGeometry(3.1, 0.06, 0.06);
+  const railPostGeo = new THREE.BoxGeometry(0.05, 0.95, 0.05);
+  const stepGeo = new THREE.BoxGeometry(0.82, 0.07, 0.34);
+  const stringerGeo = new THREE.BoxGeometry(0.06, 0.14, 5.2);
+  geometries.push(loftDeckGeo, loftRailGeo, railPostGeo, stepGeo, stringerGeo);
+
+  const loftDeck = new THREE.Mesh(loftDeckGeo, steelBlackMat);
+  loftDeck.position.set(23.85, 2.88, -11.8);
+  const loftFrontRail = new THREE.Mesh(loftRailGeo, gantrySteelMat);
+  loftFrontRail.position.set(23.85, 3.75, -10.22);
+  const loftSideRail = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 3.2), gantrySteelMat);
+  loftSideRail.position.set(25.38, 3.75, -11.8);
+  geometries.push(loftSideRail.geometry);
+  hangarGroup.add(loftDeck, loftFrontRail, loftSideRail);
+
+  for (const rx of [22.4, 23.85, 25.38]) {
+    const p = new THREE.Mesh(railPostGeo, gantrySteelMat);
+    p.position.set(rx, 3.35, -10.22);
+    hangarGroup.add(p);
+  }
+  const stringerL = new THREE.Mesh(stringerGeo, gantrySteelMat);
+  stringerL.position.set(22.34, 1.48, -8.35);
+  stringerL.rotation.x = 0.56;
+  const stringerR = new THREE.Mesh(stringerGeo, gantrySteelMat);
+  stringerR.position.set(23.12, 1.48, -8.35);
+  stringerR.rotation.x = 0.56;
+  hangarGroup.add(stringerL, stringerR);
+
+  for (let st = 0; st < 10; st++) {
+    const t = (st + 1) / 10;
+    const step = new THREE.Mesh(stepGeo, gantrySteelMat);
+    step.position.set(22.73, t * 2.82, -6.2 - t * 4.05);
+    hangarGroup.add(step);
+  }
+
+  // Rooftop "78 GHOST GARAGE" Sign + Top-Right Luminous "78" Emblem + Interior Wall Signs
+  const hangarSignGeo = new THREE.PlaneGeometry(6.8, 1.65);
   const hangarSignMat = new THREE.MeshStandardMaterial({
     map: textures.hangarSign,
     emissiveMap: textures.hangarSign,
     emissive: new THREE.Color(0xffffff),
-    emissiveIntensity: 0.85,
-    roughness: 0.3,
+    emissiveIntensity: 0.26,
+    roughness: 0.38,
   });
-  const tallerWallSignGeo = new THREE.PlaneGeometry(5.4, 1.25);
+  const emblem78Geo = new THREE.PlaneGeometry(1.75, 1.75);
+  const emblem78Mat = new THREE.MeshStandardMaterial({
+    map: textures.number78Sign,
+    emissiveMap: textures.number78Sign,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.28,
+    roughness: 0.35,
+  });
+  const tallerWallSignGeo = new THREE.PlaneGeometry(5.6, 1.3);
   const tallerWallSignMat = new THREE.MeshStandardMaterial({
     map: textures.tallerWallSign,
     emissiveMap: textures.tallerWallSign,
     emissive: new THREE.Color(0xffffff),
-    emissiveIntensity: 0.82,
-    roughness: 0.32,
+    emissiveIntensity: 0.24,
+    roughness: 0.38,
   });
-  geometries.push(hangarSignGeo, tallerWallSignGeo);
-  materials.push(hangarSignMat, tallerWallSignMat);
+  const ghostGarageSignGeo = new THREE.PlaneGeometry(4.2, 1.0);
+  const ghostGarageSignMat = new THREE.MeshStandardMaterial({
+    map: textures.ghostGarageSign,
+    emissiveMap: textures.ghostGarageSign,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.24,
+    side: THREE.DoubleSide,
+    roughness: 0.36,
+  });
+  geometries.push(hangarSignGeo, emblem78Geo, tallerWallSignGeo, ghostGarageSignGeo);
+  materials.push(hangarSignMat, emblem78Mat, tallerWallSignMat, ghostGarageSignMat);
+
+  const hangarSignBoard = new THREE.Mesh(
+    new THREE.BoxGeometry(7.1, 1.85, 0.25),
+    darkWallMat
+  );
+  hangarSignBoard.position.set(28.8, 6.2, -2.08);
+  geometries.push(hangarSignBoard.geometry);
+
   const hangarSignMesh = new THREE.Mesh(hangarSignGeo, hangarSignMat);
-  hangarSignMesh.position.set(17.5, 4.45, -16.34);
+  hangarSignMesh.position.set(28.8, 6.2, -1.94);
+
+  const emblem78Back = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.9, 0.24), darkWallMat);
+  emblem78Back.position.set(36.7, 6.0, -2.06);
+  geometries.push(emblem78Back.geometry);
+  const emblem78Mesh = new THREE.Mesh(emblem78Geo, emblem78Mat);
+  emblem78Mesh.position.set(36.7, 6.0, -1.92);
+
   const wallBackSign = new THREE.Mesh(tallerWallSignGeo, tallerWallSignMat);
-  wallBackSign.position.set(17.5, 3.35, -23.72);
+  wallBackSign.position.set(30.0, 3.45, -13.3);
   const wallLeftSign = new THREE.Mesh(tallerWallSignGeo, tallerWallSignMat);
   wallLeftSign.rotation.y = Math.PI / 2;
-  wallLeftSign.position.set(10.04, 3.2, -20.2);
-  hangarGroup.add(hangarSignMesh, wallBackSign, wallLeftSign);
+  wallLeftSign.position.set(22.35, 4.15, -7.2);
 
-  for (const bayX of [12.5, 17.5, 22.5]) {
-    for (const dx of [-1.1, 1.1]) {
-      const strip = new THREE.Mesh(ledStripGeo, ledStripMat);
-      strip.position.set(bayX + dx, 4.64, -20.0);
-      hangarGroup.add(strip);
+  // "GHOST GARAGE" Sign mounted right over the interior doorway linking to Concesionario
+  const ghostDoorSign = new THREE.Mesh(ghostGarageSignGeo, ghostGarageSignMat);
+  ghostDoorSign.rotation.y = -Math.PI / 2;
+  ghostDoorSign.position.set(37.80, 3.72, -8.0);
+
+  hangarGroup.add(
+    hangarSignBoard,
+    hangarSignMesh,
+    emblem78Back,
+    emblem78Mesh,
+    wallBackSign,
+    wallLeftSign,
+    ghostDoorSign
+  );
+
+  // 3 Open Bays (Instanced stops, LED ceiling panels, 2-post lifts & tires for max FPS)
+  const bayCount = TUNER_BAY_X_CENTERS.length;
+  const stopInst = new THREE.InstancedMesh(wheelStopGeo, whiteTrimMat, bayCount * 2);
+  const tallerLedInst = new THREE.InstancedMesh(ledPanelGeo, ledStripMat, bayCount * 6);
+  const liftPostInst = new THREE.InstancedMesh(liftPostGeo, liftRedMat, bayCount * 2);
+  const liftArmInst = new THREE.InstancedMesh(liftArmGeo, steelBlackMat, bayCount * 2);
+  let stopIdx = 0;
+  let tallerLedIdx = 0;
+  let liftIdx = 0;
+
+  for (const bayX of TUNER_BAY_X_CENTERS) {
+    const shutter = new THREE.Mesh(shutterRollGeo, steelBlackMat);
+    shutter.position.set(bayX, 3.95, -2.05);
+    hangarGroup.add(shutter);
+
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(1, 1, 1);
+
+    for (const sSide of [-1, 1]) {
+      dummy.position.set(bayX + sSide * 1.92, 0.11, -1.78);
+      dummy.updateMatrix();
+      stopInst.setMatrixAt(stopIdx++, dummy.matrix);
     }
-    const padFill = new THREE.Mesh(bayZonePadGeo, bayFloorFillMat);
-    padFill.position.set(bayX, 0.02, -19.8);
-    const edgeL = new THREE.Mesh(bayEdgeZGeo, bayTriggerMat);
-    edgeL.position.set(bayX - 1.56, 0.022, -19.8);
-    const edgeR = new THREE.Mesh(bayEdgeZGeo, bayTriggerMat);
-    edgeR.position.set(bayX + 1.56, 0.022, -19.8);
-    const edgeFront = new THREE.Mesh(bayEdgeXGeo, bayTriggerMat);
-    edgeFront.position.set(bayX, 0.022, -17.12);
-    const edgeBack = new THREE.Mesh(bayEdgeXGeo, bayTriggerMat);
-    edgeBack.position.set(bayX, 0.022, -22.48);
-    hangarGroup.add(padFill, edgeL, edgeR, edgeFront, edgeBack);
+
+    for (const lx of [-1.05, 1.05]) {
+      for (const lz of [-4.4, -7.8, -11.2]) {
+        dummy.position.set(bayX + lx, 4.98, lz);
+        dummy.updateMatrix();
+        tallerLedInst.setMatrixAt(tallerLedIdx++, dummy.matrix);
+      }
+    }
+
+    const ring = new THREE.Mesh(bayRingGeo, bayCyanRingMat);
+    ring.position.set(bayX, 0.025, -7.6);
+    const glowDisk = new THREE.Mesh(bayGlowDiskGeo, bayCyanFillMat);
+    glowDisk.position.set(bayX, 0.022, -7.6);
+    hangarGroup.add(ring, glowDisk);
 
     for (const side of [-1, 1]) {
-      const post = new THREE.Mesh(liftPostGeo, liftRedMat);
-      post.position.set(bayX + side * 1.95, 1.38, -20.0);
-      const arm = new THREE.Mesh(liftArmGeo, steelBlackMat);
-      arm.position.set(bayX + side * 1.58, 0.28, -20.0);
-      hangarGroup.add(post, arm);
+      dummy.position.set(bayX + side * 2.02, 1.38, -7.8);
+      dummy.updateMatrix();
+      liftPostInst.setMatrixAt(liftIdx, dummy.matrix);
+
+      dummy.position.set(bayX + side * 1.62, 0.28, -7.8);
+      dummy.updateMatrix();
+      liftArmInst.setMatrixAt(liftIdx, dummy.matrix);
+      liftIdx++;
     }
     const cart = new THREE.Mesh(cartGeo, liftRedMat);
-    cart.position.set(bayX - 1.1, 0.46, -23.2);
+    cart.position.set(bayX - 1.1, 0.46, -12.7);
     hangarGroup.add(cart);
   }
-
-  for (let i = 0; i < 4; i++) {
-    const t = new THREE.Mesh(stackTireGeo, darkWallMat);
-    t.position.set(10.8, 0.14 + i * 0.21, -22.7);
-    hangarGroup.add(t);
+  for (const inst of [stopInst, tallerLedInst, liftPostInst, liftArmInst]) {
+    inst.instanceMatrix.needsUpdate = true;
+    inst.computeBoundingSphere();
   }
+  hangarGroup.add(stopInst, tallerLedInst, liftPostInst, liftArmInst);
 
-  // --- B) RIGHT SIDE OF PARKING: WALKABLE GLASS CONCESIONARIO WITH ALL 9 CARS ---
+  const tireStackInst = new THREE.InstancedMesh(stackTireGeo, darkWallMat, 4);
+  for (let i = 0; i < 4; i++) {
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.position.set(26.4, 0.14 + i * 0.21, -12.6);
+    dummy.updateMatrix();
+    tireStackInst.setMatrixAt(i, dummy.matrix);
+  }
+  tireStackInst.instanceMatrix.needsUpdate = true;
+  tireStackInst.computeBoundingSphere();
+  hangarGroup.add(tireStackInst);
+
+  // --- B) CONNECTED VIP CONCESIONARIO (WOOD FLOOR, LOUNGE SOFAS, CAR ARTWORKS, GREEN COUNTER BOX & ALL 9 CARS) ---
+  // Spans x = 38.0 .. 64.0 (width 26.0m), z = -18.0 .. +2.0 (depth 20.0m), glass front + open door at z = +2.0
   const dealerGroup = new THREE.Group();
   parkingComplexGroup.add(dealerGroup);
 
-  const dealerRoofGeo = new THREE.BoxGeometry(21.2, 0.38, 28.6);
-  const dealerBackGeo = new THREE.BoxGeometry(0.32, 4.9, 28.6);
-  const dealerSideGeo = new THREE.BoxGeometry(21.2, 4.9, 0.32);
-  const dealerFasciaGeo = new THREE.BoxGeometry(0.28, 0.9, 28.6);
-  const dealerGlassWingGeo = new THREE.PlaneGeometry(10.0, 3.9);
-  dealerGlassWingGeo.rotateY(-Math.PI / 2);
-  const dealerPadGeo = new THREE.BoxGeometry(20.6, 0.05, 28.0);
-  const dealerLedGeo = new THREE.BoxGeometry(1.4, 0.06, 4.4);
-  const plinthGeo = new THREE.CylinderGeometry(2.55, 2.7, 0.1, 32);
-  const plinthRingGeo = new THREE.RingGeometry(2.58, 2.7, 32);
+  const dealerRoofGeo = new THREE.BoxGeometry(26.0, 0.42, 20.0);
+  const dealerBackGeo = new THREE.BoxGeometry(26.0, 5.2, 0.34);
+  const dealerSideGeo = new THREE.BoxGeometry(0.34, 5.2, 20.0);
+  const dealerFasciaGeo = new THREE.BoxGeometry(26.0, 1.15, 0.36);
+  const dealerGlassLeftGeo = new THREE.PlaneGeometry(9.6, 4.2);
+  const dealerGlassRightGeo = new THREE.PlaneGeometry(9.6, 4.2);
+  const dealerGlassSideGeo = new THREE.PlaneGeometry(4.0, 4.2);
+  dealerGlassSideGeo.rotateY(-Math.PI / 2);
+  const dealerPadGeo = new THREE.PlaneGeometry(25.6, 19.6);
+  dealerPadGeo.rotateX(-Math.PI / 2);
+  const dealerLedGeo = new THREE.BoxGeometry(1.45, 0.06, 3.6);
+  const plinthGeo = new THREE.CylinderGeometry(2.3, 2.45, 0.1, 32);
+  const plinthRingGeo = new THREE.RingGeometry(2.34, 2.45, 32);
   plinthRingGeo.rotateX(-Math.PI / 2);
-  const entryStripGeo = new THREE.BoxGeometry(0.18, 0.04, 7.2);
+  const entryStripGeo = new THREE.BoxGeometry(6.0, 0.04, 0.22);
 
   geometries.push(
     dealerRoofGeo,
     dealerBackGeo,
     dealerSideGeo,
     dealerFasciaGeo,
-    dealerGlassWingGeo,
+    dealerGlassLeftGeo,
+    dealerGlassRightGeo,
+    dealerGlassSideGeo,
     dealerPadGeo,
     dealerLedGeo,
     plinthGeo,
@@ -882,65 +1782,206 @@ export function buildMetropolisWorld(
   );
 
   const dealerRoof = new THREE.Mesh(dealerRoofGeo, steelBlackMat);
-  dealerRoof.position.set(41.0, 4.85, -2.5);
+  dealerRoof.position.set(51.0, 5.25, -8.0);
   const dealerBack = new THREE.Mesh(dealerBackGeo, darkWallMat);
-  dealerBack.position.set(51.5, 2.45, -2.5);
-  const dealerNorth = new THREE.Mesh(dealerSideGeo, darkWallMat);
-  dealerNorth.position.set(41.0, 2.45, -16.65);
-  const dealerSouth = new THREE.Mesh(dealerSideGeo, darkWallMat);
-  dealerSouth.position.set(41.0, 2.45, 11.65);
-  const dealerFascia = new THREE.Mesh(dealerFasciaGeo, steelBlackMat);
-  dealerFascia.position.set(30.5, 4.45, -2.5);
-  const dealerPad = new THREE.Mesh(dealerPadGeo, showcaseFloorMat);
-  dealerPad.position.set(41.0, 0.025, -2.5);
-  dealerPad.receiveShadow = true;
-  dealerGroup.add(dealerRoof, dealerBack, dealerNorth, dealerSouth, dealerFascia, dealerPad);
+  dealerBack.position.set(51.0, 2.6, -17.9);
+  const dealerRight = new THREE.Mesh(dealerSideGeo, darkWallMat);
+  dealerRight.position.set(63.85, 2.6, -8.0);
 
-  for (const mz of [-16.4, -6.3, 1.3, 11.4]) {
+  const dealerFascia = new THREE.Mesh(dealerFasciaGeo, steelBlackMat);
+  dealerFascia.position.set(51.0, 4.75, 2.0);
+  const dealerPad = new THREE.Mesh(dealerPadGeo, woodFloorMat);
+  dealerPad.position.set(51.0, 0.025, -8.0);
+  dealerPad.receiveShadow = true;
+  dealerGroup.add(dealerRoof, dealerBack, dealerRight, dealerFascia, dealerPad);
+
+  for (const mx of [38.2, 47.9, 54.1, 63.8]) {
     const mullion = new THREE.Mesh(columnGeo, steelBlackMat);
-    mullion.position.set(30.5, 2.4, mz);
+    mullion.position.set(mx, 2.55, 2.0);
     dealerGroup.add(mullion);
   }
-  const glassNorthWing = new THREE.Mesh(dealerGlassWingGeo, glassFacadeMat);
-  glassNorthWing.position.set(30.48, 2.0, -11.35);
-  const glassSouthWing = new THREE.Mesh(dealerGlassWingGeo, glassFacadeMat);
-  glassSouthWing.position.set(30.48, 2.0, 6.35);
+  const glassFrontLeft = new THREE.Mesh(dealerGlassLeftGeo, glassFacadeMat);
+  glassFrontLeft.position.set(43.05, 2.1, 2.02);
+  const glassFrontRight = new THREE.Mesh(dealerGlassRightGeo, glassFacadeMat);
+  glassFrontRight.position.set(58.95, 2.1, 2.02);
+  const glassCornerSide = new THREE.Mesh(dealerGlassSideGeo, glassFacadeMat);
+  glassCornerSide.position.set(38.02, 2.1, 0.0);
+  // Open Walkable Doorway between x = 48.0 .. 54.0 at z = 2.0!
   const entryThreshold = new THREE.Mesh(entryStripGeo, ledStripMat);
-  entryThreshold.position.set(30.5, 0.04, -2.5);
-  dealerGroup.add(glassNorthWing, glassSouthWing, entryThreshold);
+  entryThreshold.position.set(51.0, 0.04, 2.0);
+  dealerGroup.add(glassFrontLeft, glassFrontRight, glassCornerSide, entryThreshold);
 
-  const dealerSignGeo = new THREE.PlaneGeometry(6.8, 1.35);
-  dealerSignGeo.rotateY(-Math.PI / 2);
+  const dealerSignGeo = new THREE.PlaneGeometry(7.2, 1.4);
   const dealerSignMat = new THREE.MeshStandardMaterial({
     map: textures.dealershipSign,
     emissiveMap: textures.dealershipSign,
     emissive: new THREE.Color(0xffffff),
-    emissiveIntensity: 0.85,
-    roughness: 0.3,
+    emissiveIntensity: 0.26,
+    roughness: 0.36,
   });
   geometries.push(dealerSignGeo);
   materials.push(dealerSignMat);
   const dealerSignMesh = new THREE.Mesh(dealerSignGeo, dealerSignMat);
-  dealerSignMesh.position.set(30.32, 4.45, -2.5);
+  dealerSignMesh.position.set(51.0, 4.75, 2.2);
   dealerGroup.add(dealerSignMesh);
 
+  // Interior Framed Car Artworks ("Cuadros de coches") + Concesionario Interior Wall Banner
+  const frameOuterGeo = new THREE.BoxGeometry(3.2, 1.85, 0.12);
+  const frameArtGeo = new THREE.PlaneGeometry(2.96, 1.62);
+  const poster1Mat = new THREE.MeshStandardMaterial({
+    map: textures.carPoster1,
+    emissiveMap: textures.carPoster1,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.35,
+    roughness: 0.4,
+  });
+  const poster2Mat = new THREE.MeshStandardMaterial({
+    map: textures.carPoster2,
+    emissiveMap: textures.carPoster2,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.35,
+    roughness: 0.4,
+  });
+  geometries.push(frameOuterGeo, frameArtGeo);
+  materials.push(poster1Mat, poster2Mat);
+
+  const addWallArt = (x: number, y: number, z: number, rotY: number, mat: THREE.Material) => {
+    const f = new THREE.Group();
+    f.position.set(x, y, z);
+    f.rotation.y = rotY;
+    const border = new THREE.Mesh(frameOuterGeo, steelBlackMat);
+    const art = new THREE.Mesh(frameArtGeo, mat);
+    art.position.z = 0.07;
+    f.add(border, art);
+    dealerGroup.add(f);
+  };
+  addWallArt(46.0, 2.75, -17.65, 0, poster1Mat);
+  addWallArt(56.0, 2.75, -17.65, 0, poster2Mat);
+  addWallArt(63.6, 2.65, -11.5, -Math.PI / 2, poster1Mat);
+  addWallArt(63.6, 2.65, -5.2, -Math.PI / 2, poster2Mat);
+
+  const interiorBanner = new THREE.Mesh(new THREE.PlaneGeometry(5.8, 1.15), dealerSignMat);
+  interiorBanner.position.set(51.0, 4.15, -17.65);
+  geometries.push(interiorBanner.geometry);
+  dealerGroup.add(interiorBanner);
+
+  // VIP Lounge Front-Left: Rug + Two Gray Sofas + Low Coffee Table
+  const sofaFabricMat = new THREE.MeshStandardMaterial({
+    color: 0x475569,
+    roughness: 0.88,
+    metalness: 0.06,
+  });
+  const rugMat = new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    roughness: 0.96,
+  });
+  const rugGeo = new THREE.BoxGeometry(5.6, 0.03, 3.6);
+  const sofaSeatGeo = new THREE.BoxGeometry(2.6, 0.36, 0.92);
+  const sofaBackGeo = new THREE.BoxGeometry(2.6, 0.56, 0.24);
+  const sofaArmGeo = new THREE.BoxGeometry(0.22, 0.50, 0.94);
+  const coffeeTopGeo = new THREE.BoxGeometry(1.5, 0.06, 0.92);
+  const coffeeLegGeo = new THREE.BoxGeometry(1.2, 0.32, 0.68);
+  geometries.push(rugGeo, sofaSeatGeo, sofaBackGeo, sofaArmGeo, coffeeTopGeo, coffeeLegGeo);
+  materials.push(sofaFabricMat, rugMat);
+
+  const loungeRug = new THREE.Mesh(rugGeo, rugMat);
+  loungeRug.position.set(43.2, 0.04, -1.1);
+  dealerGroup.add(loungeRug);
+
+  const addSofa = (sx: number, sz: number, rotY: number) => {
+    const sg = new THREE.Group();
+    sg.position.set(sx, 0.05, sz);
+    sg.rotation.y = rotY;
+    const seat = new THREE.Mesh(sofaSeatGeo, sofaFabricMat);
+    seat.position.y = 0.24;
+    const back = new THREE.Mesh(sofaBackGeo, sofaFabricMat);
+    back.position.set(0, 0.54, -0.34);
+    const armL = new THREE.Mesh(sofaArmGeo, sofaFabricMat);
+    armL.position.set(-1.22, 0.36, 0);
+    const armR = new THREE.Mesh(sofaArmGeo, sofaFabricMat);
+    armR.position.set(1.22, 0.36, 0);
+    sg.add(seat, back, armL, armR);
+    dealerGroup.add(sg);
+  };
+  addSofa(43.2, -2.35, 0);
+  addSofa(41.1, -0.65, Math.PI / 2);
+
+  const tableBase = new THREE.Mesh(coffeeLegGeo, steelBlackMat);
+  tableBase.position.set(43.4, 0.21, -0.75);
+  const tableTop = new THREE.Mesh(coffeeTopGeo, glassFacadeMat);
+  tableTop.position.set(43.4, 0.40, -0.75);
+  dealerGroup.add(tableBase, tableTop);
+
+  // Reception Counter (Front-Right) + Glowing Green Floor Trigger Box
+  const counterBodyGeo = new THREE.BoxGeometry(1.1, 1.05, 3.8);
+  const counterTopGeo = new THREE.BoxGeometry(1.24, 0.08, 3.96);
+  const monitorGeo = new THREE.BoxGeometry(0.06, 0.36, 0.62);
+  const greenBorderLongGeo = new THREE.PlaneGeometry(1.9, 0.09);
+  greenBorderLongGeo.rotateX(-Math.PI / 2);
+  const greenBorderSideGeo = new THREE.PlaneGeometry(0.09, 1.9);
+  greenBorderSideGeo.rotateX(-Math.PI / 2);
+  const greenPadGeo = new THREE.PlaneGeometry(1.85, 1.85);
+  greenPadGeo.rotateX(-Math.PI / 2);
+  geometries.push(
+    counterBodyGeo,
+    counterTopGeo,
+    monitorGeo,
+    greenBorderLongGeo,
+    greenBorderSideGeo,
+    greenPadGeo
+  );
+
+  const counterDesk = new THREE.Mesh(counterBodyGeo, darkWallMat);
+  counterDesk.position.set(58.4, 0.54, -0.8);
+  const counterTop = new THREE.Mesh(counterTopGeo, whiteTrimMat);
+  counterTop.position.set(58.4, 1.09, -0.8);
+  const monitorA = new THREE.Mesh(monitorGeo, bayCyanRingMat);
+  monitorA.position.set(58.35, 1.32, -1.35);
+  const monitorB = new THREE.Mesh(monitorGeo, bayCyanRingMat);
+  monitorB.position.set(58.35, 1.32, -0.25);
+  dealerGroup.add(counterDesk, counterTop, monitorA, monitorB);
+
+  // Glowing Green Floor Box ("Recuadro verde luminoso") at DEALERSHIP_COUNTER_POS
+  const gPad = new THREE.Mesh(greenPadGeo, greenFillMat);
+  gPad.position.set(DEALERSHIP_COUNTER_POS.x, 0.032, DEALERSHIP_COUNTER_POS.z);
+  const gTop = new THREE.Mesh(greenBorderLongGeo, greenBoxMat);
+  gTop.position.set(DEALERSHIP_COUNTER_POS.x, 0.035, DEALERSHIP_COUNTER_POS.z - 0.92);
+  const gBot = new THREE.Mesh(greenBorderLongGeo, greenBoxMat);
+  gBot.position.set(DEALERSHIP_COUNTER_POS.x, 0.035, DEALERSHIP_COUNTER_POS.z + 0.92);
+  const gLeft = new THREE.Mesh(greenBorderSideGeo, greenBoxMat);
+  gLeft.position.set(DEALERSHIP_COUNTER_POS.x - 0.92, 0.035, DEALERSHIP_COUNTER_POS.z);
+  const gRight = new THREE.Mesh(greenBorderSideGeo, greenBoxMat);
+  gRight.position.set(DEALERSHIP_COUNTER_POS.x + 0.92, 0.035, DEALERSHIP_COUNTER_POS.z);
+  dealerGroup.add(gPad, gTop, gBot, gLeft, gRight);
+
+  // All 9 Showcase Cars on Instanced Dark Plinths + Ceiling LED Panels
   const allCatalogSpecs = Object.values(CAR_CATALOG);
-  const colXs = [35.0, 41.4, 47.8];
-  const rowZs = [-10.8, -2.5, 5.8];
+  const colXs = [42.5, 51.5, 60.5];
+  const rowZs = [-15.5, -10.8, -6.0];
+
+  const plinthInst = new THREE.InstancedMesh(plinthGeo, plinthMat, allCatalogSpecs.length);
+  const plinthRingInst = new THREE.InstancedMesh(plinthRingGeo, plinthTrimMat, allCatalogSpecs.length);
+  const dealerLedInst = new THREE.InstancedMesh(dealerLedGeo, ledStripMat, allCatalogSpecs.length);
 
   allCatalogSpecs.forEach((spec, idx) => {
     const col = idx % 3;
     const row = Math.floor(idx / 3);
-    const sx = colXs[col] ?? 41.4;
-    const sz = rowZs[row] ?? -2.5;
+    const sx = colXs[col] ?? 51.5;
+    const sz = rowZs[row] ?? -10.8;
 
-    const plinth = new THREE.Mesh(plinthGeo, plinthMat);
-    plinth.position.set(sx, 0.05, sz);
-    const ring = new THREE.Mesh(plinthRingGeo, plinthTrimMat);
-    ring.position.set(sx, 0.105, sz);
-    const ceilingPanel = new THREE.Mesh(dealerLedGeo, ledStripMat);
-    ceilingPanel.position.set(sx, 4.64, sz);
-    dealerGroup.add(plinth, ring, ceilingPanel);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.position.set(sx, 0.05, sz);
+    dummy.updateMatrix();
+    plinthInst.setMatrixAt(idx, dummy.matrix);
+
+    dummy.position.set(sx, 0.105, sz);
+    dummy.updateMatrix();
+    plinthRingInst.setMatrixAt(idx, dummy.matrix);
+
+    dummy.position.set(sx, 4.98, sz);
+    dummy.updateMatrix();
+    dealerLedInst.setMatrixAt(idx, dummy.matrix);
 
     const car = buildCompositeVehicle({
       style: spec.bodyStyle,
@@ -952,175 +1993,575 @@ export function buildMetropolisWorld(
       isTraffic: true,
     });
     car.root.position.set(sx, 0.10, sz);
-    car.root.rotation.y = Math.PI * 0.58;
+    car.root.rotation.y = Math.PI * 0.82;
     dealerGroup.add(car.root);
     showcaseEntries.push({ carId: spec.id, x: sx, z: sz, vehicle: car });
   });
+  for (const inst of [plinthInst, plinthRingInst, dealerLedInst]) {
+    inst.instanceMatrix.needsUpdate = true;
+    inst.computeBoundingSphere();
+  }
+  dealerGroup.add(plinthInst, plinthRingInst, dealerLedInst);
 
-  // Parking streetlamps
-  const lampPostGeo = new THREE.CylinderGeometry(0.09, 0.13, 6.2, 10);
+  // --- C) GIANT "MEJORES PILOTOS A NIVEL MUNDIAL" LEADERBOARD BILLBOARD (RIGHT OF CONCESIONARIO) ---
+  const lbGroup = new THREE.Group();
+  lbGroup.position.set(65.6, 0, 4.6);
+  lbGroup.rotation.y = -0.52;
+  parkingComplexGroup.add(lbGroup);
+
+  const lbPoleGeo = new THREE.CylinderGeometry(0.16, 0.2, 6.4, 10);
+  const lbFrameGeo = new THREE.BoxGeometry(5.5, 5.5, 0.28);
+  const lbFaceGeo = new THREE.PlaneGeometry(5.2, 5.2);
+  const lbFaceMat = new THREE.MeshStandardMaterial({
+    map: textures.leaderboardSign,
+    emissiveMap: textures.leaderboardSign,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.22,
+    roughness: 0.36,
+  });
+  geometries.push(lbPoleGeo, lbFrameGeo, lbFaceGeo);
+  materials.push(lbFaceMat);
+
+  const lbPoleL = new THREE.Mesh(lbPoleGeo, steelBlackMat);
+  lbPoleL.position.set(-1.7, 3.2, 0);
+  const lbPoleR = new THREE.Mesh(lbPoleGeo, steelBlackMat);
+  lbPoleR.position.set(1.7, 3.2, 0);
+  const lbFrame = new THREE.Mesh(lbFrameGeo, steelBlackMat);
+  lbFrame.position.set(0, 4.5, 0);
+  const lbFace = new THREE.Mesh(lbFaceGeo, lbFaceMat);
+  lbFace.position.set(0, 4.5, 0.155);
+  lbGroup.add(lbPoleL, lbPoleR, lbFrame, lbFace);
+
+  // --- D) NOCTURNAL LOBBY PADDOCK PROPS (CARRIER TRUCK, STACKED CONTAINERS, 2 RED TENTS + CARS, GREEN FENCE & TREES) ---
+  // 1. Car Carrier Truck (Background-left from Lobby perspective: x = 56.5, z = 9.0)
+  const carrierGroup = new THREE.Group();
+  carrierGroup.position.set(56.8, 0, 9.2);
+  carrierGroup.rotation.y = -0.45;
+  parkingComplexGroup.add(carrierGroup);
+
+  const cabMat = new THREE.MeshPhysicalMaterial({
+    color: 0xe2e8f0,
+    roughness: 0.28,
+    metalness: 0.35,
+    clearcoat: 0.7,
+  });
+  const trailerSteelMat = new THREE.MeshStandardMaterial({
+    color: 0x334155,
+    metalness: 0.72,
+    roughness: 0.42,
+  });
+  const truckTireMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.88 });
+  const containerRedMat = new THREE.MeshStandardMaterial({
+    color: 0xb91c1c,
+    roughness: 0.62,
+    metalness: 0.28,
+  });
+  const containerBlueMat = new THREE.MeshStandardMaterial({
+    color: 0x1d4ed8,
+    roughness: 0.58,
+    metalness: 0.3,
+  });
+  const tentRedMat = new THREE.MeshStandardMaterial({
+    color: 0xdc2626,
+    roughness: 0.68,
+    metalness: 0.08,
+    side: THREE.DoubleSide,
+  });
+  materials.push(cabMat, trailerSteelMat, truckTireMat, containerRedMat, containerBlueMat, tentRedMat);
+
+  const cabBodyGeo = new THREE.BoxGeometry(2.55, 2.35, 2.65);
+  const cabWindshieldGeo = new THREE.BoxGeometry(2.38, 0.92, 0.1);
+  const trailerLowerGeo = new THREE.BoxGeometry(2.6, 0.28, 9.6);
+  const trailerUpperGeo = new THREE.BoxGeometry(2.45, 0.18, 8.2);
+  const trailerPostGeo = new THREE.BoxGeometry(0.14, 1.9, 0.14);
+  const truckWheelGeo = new THREE.CylinderGeometry(0.48, 0.48, 0.34, 14);
+  truckWheelGeo.rotateZ(Math.PI / 2);
+  geometries.push(
+    cabBodyGeo,
+    cabWindshieldGeo,
+    trailerLowerGeo,
+    trailerUpperGeo,
+    trailerPostGeo,
+    truckWheelGeo
+  );
+
+  const cabMesh = new THREE.Mesh(cabBodyGeo, cabMat);
+  cabMesh.position.set(0, 1.65, -4.7);
+  const cabGlass = new THREE.Mesh(cabWindshieldGeo, glassFacadeMat);
+  cabGlass.position.set(0, 2.15, -6.02);
+  const trailerLower = new THREE.Mesh(trailerLowerGeo, trailerSteelMat);
+  trailerLower.position.set(0, 0.72, 1.5);
+  const trailerUpper = new THREE.Mesh(trailerUpperGeo, trailerSteelMat);
+  trailerUpper.position.set(0, 2.48, 1.2);
+  carrierGroup.add(cabMesh, cabGlass, trailerLower, trailerUpper);
+
+  for (const px of [-1.2, 1.2]) {
+    for (const pz of [-2.4, 1.2, 4.8]) {
+      const post = new THREE.Mesh(trailerPostGeo, trailerSteelMat);
+      post.position.set(px, 1.6, pz);
+      carrierGroup.add(post);
+    }
+  }
+  for (const wx of [-1.18, 1.18]) {
+    for (const wz of [-5.2, -3.7, 3.6, 5.1]) {
+      const tw = new THREE.Mesh(truckWheelGeo, truckTireMat);
+      tw.position.set(wx, 0.48, wz);
+      carrierGroup.add(tw);
+    }
+  }
+
+  // Loaded sports cars on the carrier decks
+  const carrierSpecs = [CAR_CATALOG.elegy_r34, CAR_CATALOG.supra_mk5];
+  carrierSpecs.forEach((spec, idx) => {
+    const c = buildCompositeVehicle({
+      style: spec.bodyStyle,
+      paintHex: spec.defaultPaint,
+      rimHex: spec.defaultRim,
+      underglowHex: 'none',
+      textures,
+      isSoftwareGl,
+      isTraffic: true,
+    });
+    c.root.position.set(0, idx === 0 ? 0.86 : 2.57, idx === 0 ? 3.2 : 0.6);
+    c.root.rotation.y = 0;
+    carrierGroup.add(c.root);
+    showcaseEntries.push({ carId: `carrier_${idx}`, x: 56.8, z: 9.2, vehicle: c });
+  });
+
+  // 2. Two Stacked Shipping Containers (Red bottom, Blue top)
+  const containerGeo = new THREE.BoxGeometry(6.1, 2.58, 2.45);
+  const containerRibGeo = new THREE.BoxGeometry(0.10, 2.38, 2.50);
+  geometries.push(containerGeo, containerRibGeo);
+
+  const buildContainer = (x: number, y: number, z: number, rotY: number, mat: THREE.Material) => {
+    const cg = new THREE.Group();
+    cg.position.set(x, y, z);
+    cg.rotation.y = rotY;
+    const box = new THREE.Mesh(containerGeo, mat);
+    cg.add(box);
+    for (let rx = -2.7; rx <= 2.75; rx += 0.45) {
+      const rib = new THREE.Mesh(containerRibGeo, mat);
+      rib.position.x = rx;
+      cg.add(rib);
+    }
+    parkingComplexGroup.add(cg);
+  };
+  buildContainer(60.6, 1.30, 16.6, -0.18, containerRedMat);
+  buildContainer(60.5, 3.88, 16.6, -0.12, containerBlueMat);
+
+  // 3. Two Red Paddock Canopy Tents with Sports Cars Parked Underneath
+  const tentLegGeo = new THREE.CylinderGeometry(0.05, 0.05, 2.45, 8);
+  const tentValanceGeo = new THREE.BoxGeometry(4.6, 0.44, 4.6);
+  const tentRoofGeo = new THREE.ConeGeometry(3.3, 1.15, 4);
+  tentRoofGeo.rotateY(Math.PI / 4);
+  geometries.push(tentLegGeo, tentValanceGeo, tentRoofGeo);
+
+  const tentConfigs = [
+    { x: 55.2, z: 23.0, rotY: -0.35, spec: CAR_CATALOG.comet_gt3, carRot: -1.9 },
+    { x: 48.0, z: 25.8, rotY: -0.22, spec: CAR_CATALOG.m4_csl, carRot: -1.8 },
+  ];
+  tentConfigs.forEach((tc, idx) => {
+    const tg = new THREE.Group();
+    tg.position.set(tc.x, 0, tc.z);
+    tg.rotation.y = tc.rotY;
+    for (const lx of [-2.2, 2.2]) {
+      for (const lz of [-2.2, 2.2]) {
+        const leg = new THREE.Mesh(tentLegGeo, gantrySteelMat);
+        leg.position.set(lx, 1.22, lz);
+        tg.add(leg);
+      }
+    }
+    const roof = new THREE.Mesh(tentRoofGeo, tentRedMat);
+    roof.position.set(0, 3.05, 0);
+    const valance = new THREE.Mesh(tentValanceGeo, tentRedMat);
+    valance.position.set(0, 2.38, 0);
+    tg.add(roof, valance);
+    parkingComplexGroup.add(tg);
+
+    const parkedCar = buildCompositeVehicle({
+      style: tc.spec.bodyStyle,
+      paintHex: tc.spec.defaultPaint,
+      rimHex: tc.spec.defaultRim,
+      underglowHex: 'none',
+      textures,
+      isSoftwareGl,
+      isTraffic: true,
+    });
+    parkedCar.root.position.set(tc.x, 0.015, tc.z);
+    parkedCar.root.rotation.y = tc.carRot;
+    parkingComplexGroup.add(parkedCar.root);
+    showcaseEntries.push({ carId: `tent_${idx}`, x: tc.x, z: tc.z, vehicle: parkedCar });
+  });
+
+  // 4. Dark-Green Metallic Chain-Link Fence enclosing South (z=30.0) & East (x=67.8) edges
+  const fenceGreenMat = new THREE.MeshStandardMaterial({
+    color: 0x114228,
+    roughness: 0.45,
+    metalness: 0.65,
+  });
+  const chainMeshMat = new THREE.MeshStandardMaterial({
+    map: textures.chainLinkFence,
+    transparent: true,
+    alphaTest: 0.32,
+    side: THREE.DoubleSide,
+    roughness: 0.4,
+    metalness: 0.72,
+  });
+  materials.push(fenceGreenMat, chainMeshMat);
+
+  const fencePanelGeo = new THREE.PlaneGeometry(3.0, 2.35);
+  const fencePostGeo = new THREE.CylinderGeometry(0.045, 0.05, 2.45, 8);
+  const fenceTopRailGeo = new THREE.CylinderGeometry(0.03, 0.03, 3.0, 6);
+  fenceTopRailGeo.rotateZ(Math.PI / 2);
+  geometries.push(fencePanelGeo, fencePostGeo, fenceTopRailGeo);
+
+  const fenceTransforms: Array<{ x: number; z: number; rotY: number }> = [];
+  for (let fx = 23.9; fx <= 66.5; fx += 3.0) {
+    fenceTransforms.push({ x: fx, z: 29.9, rotY: 0 });
+  }
+  for (let fz = 3.5; fz <= 28.5; fz += 3.0) {
+    fenceTransforms.push({ x: 67.8, z: fz, rotY: Math.PI / 2 });
+  }
+  const fencePanelInst = new THREE.InstancedMesh(fencePanelGeo, chainMeshMat, fenceTransforms.length);
+  const fenceRailInst = new THREE.InstancedMesh(fenceTopRailGeo, fenceGreenMat, fenceTransforms.length);
+  const fencePostInst = new THREE.InstancedMesh(fencePostGeo, fenceGreenMat, fenceTransforms.length);
+  fenceTransforms.forEach((ft, i) => {
+    dummy.scale.set(1, 1, 1);
+    dummy.rotation.set(0, ft.rotY, 0);
+    dummy.position.set(ft.x, 1.22, ft.z);
+    dummy.updateMatrix();
+    fencePanelInst.setMatrixAt(i, dummy.matrix);
+
+    dummy.position.set(ft.x, 2.40, ft.z);
+    dummy.updateMatrix();
+    fenceRailInst.setMatrixAt(i, dummy.matrix);
+
+    dummy.rotation.set(0, 0, 0);
+    if (ft.rotY === 0) {
+      dummy.position.set(ft.x - 1.5, 1.22, ft.z);
+    } else {
+      dummy.position.set(ft.x, 1.22, ft.z - 1.5);
+    }
+    dummy.updateMatrix();
+    fencePostInst.setMatrixAt(i, dummy.matrix);
+  });
+  for (const inst of [fencePanelInst, fenceRailInst, fencePostInst]) {
+    inst.instanceMatrix.needsUpdate = true;
+    inst.computeBoundingSphere();
+  }
+  parkingComplexGroup.add(fencePanelInst, fenceRailInst, fencePostInst);
+
+  // 5. Lush Broadleaf Trees Behind Fence (visible in Lobby & Parking backdrop)
+  const lushTrunkGeo = new THREE.CylinderGeometry(0.24, 0.34, 3.2, 8);
+  const lushFoliageGeo = new THREE.DodecahedronGeometry(2.3, 1);
+  const lushFoliageMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.86 });
+  geometries.push(lushTrunkGeo, lushFoliageGeo);
+  materials.push(lushFoliageMat);
+
+  const lushPositions: Array<{ x: number; z: number; s: number }> = [];
+  for (let lx = 26; lx <= 78; lx += 5.4) {
+    lushPositions.push({ x: lx + ((lx * 7) % 3) * 0.4, z: 33.2 + (lx % 2) * 1.8, s: 1.0 + (lx % 3) * 0.18 });
+    lushPositions.push({ x: lx + 2.4, z: 38.4, s: 1.25 + (lx % 2) * 0.22 });
+  }
+  for (let lz = 0; lz <= 34; lz += 5.2) {
+    lushPositions.push({ x: 70.6 + (lz % 3) * 1.4, z: lz, s: 1.05 + (lz % 3) * 0.2 });
+    lushPositions.push({ x: 75.8, z: lz + 2.2, s: 1.32 });
+  }
+
+  const lushTrunkInst = new THREE.InstancedMesh(lushTrunkGeo, trunkMat, lushPositions.length);
+  const lushCrownInst = new THREE.InstancedMesh(lushFoliageGeo, lushFoliageMat, lushPositions.length * 2);
+  const lushPalette = [
+    new THREE.Color(0x164a2a),
+    new THREE.Color(0x1e5c34),
+    new THREE.Color(0x133d23),
+  ];
+  lushPositions.forEach((lp, i) => {
+    dummy.rotation.set(0, i * 0.65, 0);
+    dummy.scale.set(lp.s, lp.s, lp.s);
+    dummy.position.set(lp.x, 1.6 * lp.s, lp.z);
+    dummy.updateMatrix();
+    lushTrunkInst.setMatrixAt(i, dummy.matrix);
+
+    dummy.position.set(lp.x, 4.1 * lp.s, lp.z);
+    dummy.updateMatrix();
+    lushCrownInst.setMatrixAt(i * 2, dummy.matrix);
+    lushCrownInst.setColorAt(i * 2, lushPalette[i % 3]);
+
+    dummy.scale.set(lp.s * 0.78, lp.s * 0.78, lp.s * 0.78);
+    dummy.position.set(lp.x + 1.1 * lp.s, 3.5 * lp.s, lp.z - 0.8 * lp.s);
+    dummy.updateMatrix();
+    lushCrownInst.setMatrixAt(i * 2 + 1, dummy.matrix);
+    lushCrownInst.setColorAt(i * 2 + 1, lushPalette[(i + 1) % 3]);
+  });
+  lushTrunkInst.instanceMatrix.needsUpdate = true;
+  lushCrownInst.instanceMatrix.needsUpdate = true;
+  if (lushCrownInst.instanceColor) lushCrownInst.instanceColor.needsUpdate = true;
+  lushTrunkInst.computeBoundingSphere();
+  lushCrownInst.computeBoundingSphere();
+  parkingComplexGroup.add(lushTrunkInst, lushCrownInst);
+
+  // Instanced Parking streetlamps illuminating esplanade & paddock
+  const lampPostGeo = new THREE.CylinderGeometry(0.09, 0.13, 6.4, 10);
   const lampHeadGeo = new THREE.BoxGeometry(0.75, 0.12, 0.36);
   const bulbGlowMat = new THREE.MeshStandardMaterial({
-    color: 0xfef3c7,
+    color: 0xe2e8f0,
     emissive: new THREE.Color(0xfef3c7),
-    emissiveIntensity: 0.9,
+    emissiveIntensity: 0.30,
   });
   geometries.push(lampPostGeo, lampHeadGeo);
   materials.push(bulbGlowMat);
 
-  for (const [lx, lz] of [
-    [12.0, 9.2],
-    [27.5, 9.2],
-    [27.5, -13.5],
-  ]) {
-    const post = new THREE.Mesh(lampPostGeo, steelBlackMat);
-    post.position.set(lx, 3.1, lz);
-    const head = new THREE.Mesh(lampHeadGeo, bulbGlowMat);
-    head.position.set(lx, 6.18, lz);
-    parkingComplexGroup.add(post, head);
-  }
+  const lampCoords: Array<[number, number]> = [
+    [24.5, 28.2],
+    [40.0, 28.2],
+    [55.5, 28.2],
+    [65.5, 14.0],
+  ];
+  const lampPostInst = new THREE.InstancedMesh(lampPostGeo, steelBlackMat, lampCoords.length);
+  const lampHeadInst = new THREE.InstancedMesh(lampHeadGeo, bulbGlowMat, lampCoords.length);
+  lampCoords.forEach(([lx, lz], i) => {
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.position.set(lx, 3.2, lz);
+    dummy.updateMatrix();
+    lampPostInst.setMatrixAt(i, dummy.matrix);
 
-  if (!isSoftwareGl) {
-    const parkLight1 = new THREE.PointLight(0xf8fafc, 2.4, 26, 1.45);
-    parkLight1.position.set(17.5, 4.0, -19.5);
-    const parkLight2 = new THREE.PointLight(0xe2e8f0, 2.9, 34, 1.35);
-    parkLight2.position.set(41.4, 4.2, -2.5);
-    const parkLight3 = new THREE.PointLight(0xfef3c7, 2.0, 28, 1.5);
-    parkLight3.position.set(18.5, 5.8, -1.5);
-    parkingComplexGroup.add(parkLight1, parkLight2, parkLight3);
-  }
-
-  // ==================== 4. INSTANCED HIGHWAY GANTRIES & OVERPASSES AROUND CLOSED LOOP ====================
-  const gantrySteelMat = new THREE.MeshStandardMaterial({
-    color: 0x334155,
-    metalness: 0.78,
-    roughness: 0.32,
+    dummy.position.set(lx, 6.38, lz);
+    dummy.updateMatrix();
+    lampHeadInst.setMatrixAt(i, dummy.matrix);
   });
+  lampPostInst.instanceMatrix.needsUpdate = true;
+  lampHeadInst.instanceMatrix.needsUpdate = true;
+  lampPostInst.computeBoundingSphere();
+  lampHeadInst.computeBoundingSphere();
+  parkingComplexGroup.add(lampPostInst, lampHeadInst);
+
+  const parkPointLights: Array<{ light: THREE.PointLight; nightIntensity: number }> = [];
+  if (!isSoftwareGl) {
+    const parkLight1 = new THREE.PointLight(0xf8fafc, 2.2, 28, 1.45);
+    parkLight1.position.set(30.0, 4.2, -7.8);
+    const parkLight2 = new THREE.PointLight(0xfffbeb, 2.5, 36, 1.35);
+    parkLight2.position.set(51.0, 4.4, -8.0);
+    const parkLight3 = new THREE.PointLight(0xfef3c7, 2.0, 38, 1.4);
+    parkLight3.position.set(44.0, 6.2, 16.0);
+    const paddockTentLight = new THREE.PointLight(0xfca5a5, 1.5, 16, 1.6);
+    paddockTentLight.position.set(51.5, 2.8, 24.4);
+    parkingComplexGroup.add(parkLight1, parkLight2, parkLight3, paddockTentLight);
+    parkPointLights.push(
+      { light: parkLight1, nightIntensity: 2.2 },
+      { light: parkLight2, nightIntensity: 2.5 },
+      { light: parkLight3, nightIntensity: 2.0 },
+      { light: paddockTentLight, nightIntensity: 1.5 }
+    );
+  }
+
+  // --- E) ZONA CAR MEET (31.5, 22.5) + CONTRATO EXPRESS TOTEM (25.0, 6.2) ---
+  const cmPadW = CAR_MEET_BOUNDS.maxX - CAR_MEET_BOUNDS.minX;
+  const cmPadD = CAR_MEET_BOUNDS.maxZ - CAR_MEET_BOUNDS.minZ;
+  const cmPadGeo = new THREE.PlaneGeometry(cmPadW, cmPadD);
+  cmPadGeo.rotateX(-Math.PI / 2);
+  const cmEdgeHGeo = new THREE.PlaneGeometry(cmPadW, 0.14);
+  cmEdgeHGeo.rotateX(-Math.PI / 2);
+  const cmEdgeVGeo = new THREE.PlaneGeometry(0.14, cmPadD);
+  cmEdgeVGeo.rotateX(-Math.PI / 2);
+  const cmFillMat = new THREE.MeshBasicMaterial({
+    color: 0x06b6d4,
+    transparent: true,
+    opacity: 0.10,
+    depthWrite: false,
+  });
+  const cmEdgeMat = new THREE.MeshBasicMaterial({
+    color: 0x22d3ee,
+    transparent: true,
+    opacity: 0.72,
+  });
+  const cmSignGeo = new THREE.PlaneGeometry(3.4, 0.85);
+  const cmSignMat = new THREE.MeshStandardMaterial({
+    map: textures.carMeetSign,
+    emissiveMap: textures.carMeetSign,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.26,
+    side: THREE.DoubleSide,
+  });
+  const cmPoleGeo = new THREE.CylinderGeometry(0.06, 0.08, 2.3, 8);
+  geometries.push(cmPadGeo, cmEdgeHGeo, cmEdgeVGeo, cmSignGeo, cmPoleGeo);
+  materials.push(cmFillMat, cmEdgeMat, cmSignMat);
+
+  const cmPad = new THREE.Mesh(cmPadGeo, cmFillMat);
+  cmPad.position.set(CAR_MEET_CENTER.x, 0.022, CAR_MEET_CENTER.z);
+  const cmEdgeN = new THREE.Mesh(cmEdgeHGeo, cmEdgeMat);
+  cmEdgeN.position.set(CAR_MEET_CENTER.x, 0.026, CAR_MEET_BOUNDS.minZ);
+  const cmEdgeS = new THREE.Mesh(cmEdgeHGeo, cmEdgeMat);
+  cmEdgeS.position.set(CAR_MEET_CENTER.x, 0.026, CAR_MEET_BOUNDS.maxZ);
+  const cmEdgeW = new THREE.Mesh(cmEdgeVGeo, cmEdgeMat);
+  cmEdgeW.position.set(CAR_MEET_BOUNDS.minX, 0.026, CAR_MEET_CENTER.z);
+  const cmEdgeE = new THREE.Mesh(cmEdgeVGeo, cmEdgeMat);
+  cmEdgeE.position.set(CAR_MEET_BOUNDS.maxX, 0.026, CAR_MEET_CENTER.z);
+  const cmPole = new THREE.Mesh(cmPoleGeo, steelBlackMat);
+  cmPole.position.set(CAR_MEET_CENTER.x, 1.15, CAR_MEET_BOUNDS.maxZ + 0.35);
+  const cmSign = new THREE.Mesh(cmSignGeo, cmSignMat);
+  cmSign.position.set(CAR_MEET_CENTER.x, 1.95, CAR_MEET_BOUNDS.maxZ + 0.35);
+  parkingComplexGroup.add(cmPad, cmEdgeN, cmEdgeS, cmEdgeW, cmEdgeE, cmPole, cmSign);
+
+  // Contrato Express Interactive Totem at CONTRACT_POS (25.0, 0, 6.2)
+  const ctRingGeo = new THREE.RingGeometry(1.15, 1.45, 32);
+  ctRingGeo.rotateX(-Math.PI / 2);
+  const ctFillGeo = new THREE.CircleGeometry(1.15, 32);
+  ctFillGeo.rotateX(-Math.PI / 2);
+  const ctKioskGeo = new THREE.BoxGeometry(0.48, 1.95, 0.32);
+  const ctSignGeo = new THREE.PlaneGeometry(2.4, 0.65);
+  const ctSignMat = new THREE.MeshStandardMaterial({
+    map: textures.contractSign,
+    emissiveMap: textures.contractSign,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.26,
+    side: THREE.DoubleSide,
+  });
+  geometries.push(ctRingGeo, ctFillGeo, ctKioskGeo, ctSignGeo);
+  materials.push(ctSignMat);
+
+  const ctRing = new THREE.Mesh(ctRingGeo, greenBoxMat);
+  ctRing.position.set(CONTRACT_POS.x, 0.028, CONTRACT_POS.z);
+  const ctFill = new THREE.Mesh(ctFillGeo, greenFillMat);
+  ctFill.position.set(CONTRACT_POS.x, 0.024, CONTRACT_POS.z);
+  const ctKiosk = new THREE.Mesh(ctKioskGeo, steelBlackMat);
+  ctKiosk.position.set(CONTRACT_POS.x - 1.1, 0.98, CONTRACT_POS.z);
+  ctKiosk.rotation.y = 0.55;
+  const ctSign = new THREE.Mesh(ctSignGeo, ctSignMat);
+  ctSign.position.set(CONTRACT_POS.x - 1.1, 2.25, CONTRACT_POS.z);
+  ctSign.rotation.y = 0.55;
+  parkingComplexGroup.add(ctRing, ctFill, ctKiosk, ctSign);
+
+  // ==================== 6. INSTANCED HIGHWAY GANTRIES & OVERPASSES AROUND ELEVATED LOOP ====================
   const signMat1 = new THREE.MeshStandardMaterial({
     map: textures.highwaySign1,
     emissiveMap: textures.highwaySign1,
     emissive: new THREE.Color(0xffffff),
-    emissiveIntensity: 0.65,
-    roughness: 0.4,
+    emissiveIntensity: 0.20,
+    roughness: 0.45,
   });
   const signMat2 = new THREE.MeshStandardMaterial({
     map: textures.highwaySign2,
     emissiveMap: textures.highwaySign2,
     emissive: new THREE.Color(0xffffff),
-    emissiveIntensity: 0.65,
-    roughness: 0.4,
+    emissiveIntensity: 0.20,
+    roughness: 0.45,
   });
-  materials.push(gantrySteelMat, signMat1, signMat2);
+  materials.push(signMat1, signMat2);
 
-  const poleGeo = new THREE.CylinderGeometry(0.15, 0.2, 8.6, 8);
-  const trussGeo = new THREE.BoxGeometry(20.0, 0.45, 0.38);
+  const poleGeo = new THREE.CylinderGeometry(0.15, 0.2, 8.2, 8);
+  const trussGeo = new THREE.BoxGeometry(24.0, 0.45, 0.38);
   const lampArmGeo = new THREE.BoxGeometry(1.1, 0.1, 0.35);
   const signPanelGeo = new THREE.PlaneGeometry(7.6, 1.9);
   geometries.push(poleGeo, trussGeo, lampArmGeo, signPanelGeo);
 
   const gantrySList: number[] = [];
-  const gantrySpacing = 74;
+  const gantrySpacing = 78;
   for (let s = 32; s < track.totalLength - 32; s += gantrySpacing) {
-    if (!track.isInParkingOpening(s)) {
+    if (!track.isInRampMergeZone(s)) {
       gantrySList.push(s);
     }
   }
 
-  const dummy = new THREE.Object3D();
-  const sample: TrackSample = { x: 0, z: 0, tx: 0, tz: -1, rx: 1, rz: 0, yaw: 0, s: 0 };
-
   const polesInst = new THREE.InstancedMesh(poleGeo, gantrySteelMat, gantrySList.length * 2);
   const trussInst = new THREE.InstancedMesh(trussGeo, gantrySteelMat, gantrySList.length);
   const lampsInst = new THREE.InstancedMesh(lampArmGeo, bulbGlowMat, gantrySList.length * 2);
-  const signGroup = new THREE.Group();
-  group.add(polesInst, trussInst, lampsInst, signGroup);
 
+  const sign1Indices: number[] = [];
+  const sign2Indices: number[] = [];
+  for (let i = 0; i < gantrySList.length; i++) {
+    if (i % 2 === 0) {
+      if (i % 4 === 0) sign1Indices.push(i);
+      else sign2Indices.push(i);
+    }
+  }
+  const signInst1 = new THREE.InstancedMesh(signPanelGeo, signMat1, Math.max(1, sign1Indices.length));
+  const signInst2 = new THREE.InstancedMesh(signPanelGeo, signMat2, Math.max(1, sign2Indices.length));
+  signInst1.count = sign1Indices.length;
+  signInst2.count = sign2Indices.length;
+  group.add(polesInst, trussInst, lampsInst, signInst1, signInst2);
+
+  let s1Cursor = 0;
+  let s2Cursor = 0;
   gantrySList.forEach((gs, i) => {
     track.sampleAtS(gs, sample);
-
-    // Left & right poles
     dummy.rotation.set(0, sample.yaw, 0);
     dummy.scale.set(1, 1, 1);
 
-    dummy.position.set(sample.x - sample.rx * 9.7, 4.3, sample.z - sample.rz * 9.7);
+    dummy.position.set(sample.x - sample.rx * 11.7, HIGHWAY_Y + 4.1, sample.z - sample.rz * 11.7);
     dummy.updateMatrix();
     polesInst.setMatrixAt(i * 2, dummy.matrix);
 
-    dummy.position.set(sample.x + sample.rx * 9.7, 4.3, sample.z + sample.rz * 9.7);
+    dummy.position.set(sample.x + sample.rx * 11.7, HIGHWAY_Y + 4.1, sample.z + sample.rz * 11.7);
     dummy.updateMatrix();
     polesInst.setMatrixAt(i * 2 + 1, dummy.matrix);
 
-    // Overhead truss
-    dummy.position.set(sample.x, 8.2, sample.z);
+    dummy.position.set(sample.x, HIGHWAY_Y + 7.9, sample.z);
     dummy.updateMatrix();
     trussInst.setMatrixAt(i, dummy.matrix);
 
-    // Overhead lamps
-    dummy.position.set(sample.x - sample.rx * 4.5, 7.9, sample.z - sample.rz * 4.5);
+    dummy.position.set(sample.x - sample.rx * 5.2, HIGHWAY_Y + 7.6, sample.z - sample.rz * 5.2);
     dummy.updateMatrix();
     lampsInst.setMatrixAt(i * 2, dummy.matrix);
 
-    dummy.position.set(sample.x + sample.rx * 4.5, 7.9, sample.z + sample.rz * 4.5);
+    dummy.position.set(sample.x + sample.rx * 5.2, HIGHWAY_Y + 7.6, sample.z + sample.rz * 5.2);
     dummy.updateMatrix();
     lampsInst.setMatrixAt(i * 2 + 1, dummy.matrix);
 
-    // Directional illuminated signage every 2nd gantry
     if (i % 2 === 0) {
-      const sign = new THREE.Mesh(signPanelGeo, i % 4 === 0 ? signMat1 : signMat2);
-      sign.position.set(
-        sample.x + sample.rx * 3.1 - sample.tx * 0.24,
-        7.75,
-        sample.z + sample.rz * 3.1 - sample.tz * 0.24
+      dummy.position.set(
+        sample.x + sample.rx * 3.5 - sample.tx * 0.24,
+        HIGHWAY_Y + 7.45,
+        sample.z + sample.rz * 3.5 - sample.tz * 0.24
       );
-      sign.rotation.y = sample.yaw;
-      signGroup.add(sign);
+      dummy.updateMatrix();
+      if (i % 4 === 0) {
+        signInst1.setMatrixAt(s1Cursor++, dummy.matrix);
+      } else {
+        signInst2.setMatrixAt(s2Cursor++, dummy.matrix);
+      }
     }
   });
-  polesInst.instanceMatrix.needsUpdate = true;
-  trussInst.instanceMatrix.needsUpdate = true;
-  lampsInst.instanceMatrix.needsUpdate = true;
-  polesInst.computeBoundingSphere();
-  trussInst.computeBoundingSphere();
-  lampsInst.computeBoundingSphere();
+  for (const inst of [polesInst, trussInst, lampsInst, signInst1, signInst2]) {
+    inst.instanceMatrix.needsUpdate = true;
+    inst.computeBoundingSphere();
+  }
 
-  // Overpasses & Pedestrian Bridges placed smoothly perpendicular to track
+  // Overpasses & Pedestrian Bridges placed above the elevated deck
   const bridgeDeckGeo = new THREE.BoxGeometry(74, 1.3, 7.5);
-  const bridgePierGeo = new THREE.BoxGeometry(1.6, 9.2, 2.2);
-  const pedDeckGeo = new THREE.BoxGeometry(34, 0.75, 2.8);
-  const pedGlassGeo = new THREE.BoxGeometry(34, 1.35, 0.08);
+  const bridgePierGeo = new THREE.BoxGeometry(1.6, HIGHWAY_Y + 8.6, 2.2);
+  const pedDeckGeo = new THREE.BoxGeometry(36, 0.75, 2.8);
+  const pedGlassGeo = new THREE.BoxGeometry(36, 1.35, 0.08);
   geometries.push(bridgeDeckGeo, bridgePierGeo, pedDeckGeo, pedGlassGeo);
 
-  const overpassCount = 10;
+  const overpassCount = 9;
   for (let i = 0; i < overpassCount; i++) {
-    const os = track.wrapS(165 + i * (track.totalLength / overpassCount));
-    if (track.isInParkingOpening(os) || track.minDistanceToTrack(19.6, -2.5) < 1) {
-      // Keep clear of the immediate Parking/Taller complex (z in [-30, +25] at x=0)
-    }
+    const os = track.wrapS(175 + i * (track.totalLength / overpassCount));
     track.sampleAtS(os, sample);
-    if (sample.x > -35 && sample.z > -42 && sample.z < 36) continue;
+    if (sample.x > -40 && sample.z > -220 && sample.z < 50) continue;
 
     const ov = new THREE.Group();
     if (i % 2 === 1) {
       const deck = new THREE.Mesh(bridgeDeckGeo, concreteMat);
-      deck.position.y = 9.4;
+      deck.position.y = HIGHWAY_Y + 9.2;
       const pierL = new THREE.Mesh(bridgePierGeo, concreteMat);
-      pierL.position.set(-14.2, 4.6, 0);
+      pierL.position.set(-16.2, (HIGHWAY_Y + 8.6) * 0.5, 0);
       const pierR = new THREE.Mesh(bridgePierGeo, concreteMat);
-      pierR.position.set(14.2, 4.6, 0);
+      pierR.position.set(16.2, (HIGHWAY_Y + 8.6) * 0.5, 0);
       ov.add(deck, pierL, pierR);
     } else {
       const pedDeck = new THREE.Mesh(pedDeckGeo, gantrySteelMat);
-      pedDeck.position.y = 6.6;
+      pedDeck.position.y = HIGHWAY_Y + 6.4;
       const pedGlassF = new THREE.Mesh(pedGlassGeo, glassFacadeMat);
-      pedGlassF.position.set(0, 7.6, 1.36);
+      pedGlassF.position.set(0, HIGHWAY_Y + 7.4, 1.36);
       const pedGlassB = new THREE.Mesh(pedGlassGeo, glassFacadeMat);
-      pedGlassB.position.set(0, 7.6, -1.36);
+      pedGlassB.position.set(0, HIGHWAY_Y + 7.4, -1.36);
       const pierL = new THREE.Mesh(bridgePierGeo, concreteMat);
-      pierL.scale.set(0.65, 0.72, 0.65);
-      pierL.position.set(-13.2, 3.3, 0);
+      pierL.scale.set(0.65, 0.78, 0.65);
+      pierL.position.set(-15.0, (HIGHWAY_Y + 6.4) * 0.5, 0);
       const pierR = new THREE.Mesh(bridgePierGeo, concreteMat);
-      pierR.scale.set(0.65, 0.72, 0.65);
-      pierR.position.set(13.2, 3.3, 0);
+      pierR.scale.set(0.65, 0.78, 0.65);
+      pierR.position.set(15.0, (HIGHWAY_Y + 6.4) * 0.5, 0);
       ov.add(pedDeck, pedGlassF, pedGlassB, pierL, pierR);
     }
     ov.position.set(sample.x, 0, sample.z);
@@ -1128,39 +2569,39 @@ export function buildMetropolisWorld(
     group.add(ov);
   }
 
-  // ==================== 5. INSTANCED MODERN METROPOLIS SKYLINE AROUND LOOP ====================
+  // ==================== 7. INSTANCED MODERN METROPOLIS SKYLINE AROUND LOOP ====================
   const towerGlassMat = new THREE.MeshPhysicalMaterial({
     map: textures.skyscraperFacade,
     roughnessMap: textures.skyscraperRoughness,
     emissiveMap: textures.skyscraperEmissive,
     emissive: new THREE.Color(0xffffff),
-    emissiveIntensity: 0.75,
-    color: 0x94a3b8,
-    roughness: 0.24,
-    metalness: 0.68,
-    clearcoat: 0.85,
-    clearcoatRoughness: 0.12,
+    emissiveIntensity: 0.06,
+    color: 0x64748b,
+    roughness: 0.30,
+    metalness: 0.58,
+    clearcoat: 0.55,
+    clearcoatRoughness: 0.16,
   });
 
   const towerConcreteMat = new THREE.MeshPhysicalMaterial({
     map: textures.skyscraperFacade,
     emissiveMap: textures.skyscraperEmissive,
     emissive: new THREE.Color(0xffe8c2),
-    emissiveIntensity: 0.55,
-    color: 0x475569,
-    roughness: 0.58,
-    metalness: 0.28,
+    emissiveIntensity: 0.04,
+    color: 0x64748b,
+    roughness: 0.62,
+    metalness: 0.22,
   });
 
   const crownWarmMat = new THREE.MeshStandardMaterial({
-    color: 0xfef3c7,
+    color: 0xe2e8f0,
     emissive: new THREE.Color(0xfbbf24),
-    emissiveIntensity: 0.9,
+    emissiveIntensity: 0.15,
   });
   const crownCoolMat = new THREE.MeshStandardMaterial({
-    color: 0xe2e8f0,
+    color: 0xcbd5e1,
     emissive: new THREE.Color(0x93c5fd),
-    emissiveIntensity: 0.85,
+    emissiveIntensity: 0.15,
   });
   materials.push(towerGlassMat, towerConcreteMat, crownWarmMat, crownCoolMat);
 
@@ -1186,20 +2627,19 @@ export function buildMetropolisWorld(
       bIdx++;
       const w = 13 + (bIdx % 4) * 3.8;
       const d = 13 + ((bIdx * 3) % 4) * 3.6;
-      const h = 30 + ((bIdx * 23) % 72) + (bIdx % 3 === 0 ? 22 : 0);
+      const h = 34 + ((bIdx * 23) % 76) + (bIdx % 3 === 0 ? 22 : 0);
       const layer = bIdx % 3;
-      const offsetDist = 23 + (w + d) * 0.38 + layer * 22 + ((bIdx * 7) % 10);
+      const offsetDist = 27 + (w + d) * 0.38 + layer * 22 + ((bIdx * 7) % 10);
 
       const tx = sample.x + sample.rx * side * offsetDist;
       const tz = sample.z + sample.rz * side * offsetDist;
 
-      // Guarantee zero overlap with ANY loop road segment AND Parking/Taller/Concesionario complex
       const minTrackDist = track.minDistanceToTrack(tx, tz);
-      const radius = Math.hypot(w, d) * 0.55 + 14;
+      const radius = Math.hypot(w, d) * 0.55 + 17;
       if (minTrackDist < radius) continue;
 
-      const inComplex = tx > 4 && tx < 62 && tz > -34 && tz < 22;
-      if (inComplex) continue;
+      const inComplexOrRamp = tx > 2 && tx < 90 && tz > -210 && tz < 52;
+      if (inComplexOrRamp) continue;
 
       placements.push({
         x: tx,
@@ -1215,7 +2655,6 @@ export function buildMetropolisWorld(
     }
   }
 
-  // Sort core placements before dense placements so LOW/MEDIUM LOD simply slices instance count!
   placements.sort((a, b) => (a.tier === b.tier ? 0 : a.tier === 'core' ? -1 : 1));
   const coreTowerCount = placements.filter((p) => p.tier === 'core').length;
   const lowTowerCount = Math.max(24, Math.floor(coreTowerCount * 0.65));
@@ -1281,7 +2720,7 @@ export function buildMetropolisWorld(
     inst.computeBoundingSphere();
   }
 
-  // ==================== 6. HIGH-SPEED 3D RAIN STREAKS ====================
+  // ==================== 8. HIGH-SPEED 3D RAIN STREAKS ====================
   const rainCount = isSoftwareGl ? 320 : 800;
   const rainPositions = new Float32Array(rainCount * 6);
   for (let i = 0; i < rainCount; i++) {
@@ -1313,30 +2752,242 @@ export function buildMetropolisWorld(
   rainSystem.visible = false;
   group.add(rainSystem);
 
-  // ==================== 7. LIGHTING ====================
-  const hemiLight = new THREE.HemisphereLight(0x93c5fd, 0x0b0f17, 0.72);
+  // ==================== 8b. REALISTIC ATMOSPHERIC SKY, SUN, CLOUDS & URBAN NIGHT DOME + MOON ====================
+  const sky = new Sky();
+  sky.scale.setScalar(4500);
+  sky.frustumCulled = false;
+  group.add(sky);
+
+  const nightDomeGeo = new THREE.SphereGeometry(2600, 24, 16);
+  const nightDomeMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+    uniforms: {
+      uZenithColor: { value: new THREE.Color(0x0b172e) },
+      uHorizonColor: { value: new THREE.Color(0x1b3258) },
+      uGroundColor: { value: new THREE.Color(0x101c34) },
+      uTime: { value: 0 },
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vWorldDir;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldDir = normalize(position);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+        gl_Position.z = gl_Position.w;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uZenithColor;
+      uniform vec3 uHorizonColor;
+      uniform vec3 uGroundColor;
+      uniform float uTime;
+      varying vec3 vWorldDir;
+
+      float hash21(vec2 p) {
+        p = fract(p * vec2(123.34, 456.21));
+        p += dot(p, p + 45.32);
+        return fract(p.x * p.y);
+      }
+
+      void main() {
+        float h = clamp(vWorldDir.y, -1.0, 1.0);
+        vec3 col = h >= 0.0
+          ? mix(uHorizonColor, uZenithColor, pow(h, 0.55))
+          : mix(uHorizonColor, uGroundColor, pow(-h, 0.45));
+
+        if (h > 0.08) {
+          vec2 starGrid = floor((vWorldDir.xz / (vWorldDir.y + 0.35)) * 110.0);
+          float rnd = hash21(starGrid);
+          if (rnd > 0.992) {
+            float twinkle = 0.55 + 0.45 * sin(uTime * 1.4 + rnd * 90.0);
+            col += vec3(0.45, 0.58, 0.78) * twinkle * smoothstep(0.08, 0.35, h);
+          }
+        }
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+  });
+  const nightDome = new THREE.Mesh(nightDomeGeo, nightDomeMat);
+  nightDome.frustumCulled = false;
+  nightDome.visible = false;
+  group.add(nightDome);
+
+  const moonGeo = new THREE.SphereGeometry(28, 16, 12);
+  const moonMat = new THREE.MeshBasicMaterial({
+    color: 0xd8e6f8,
+    fog: false,
+  });
+  const moonMesh = new THREE.Mesh(moonGeo, moonMat);
+  moonMesh.position.set(-420, 390, -820);
+  moonMesh.frustumCulled = false;
+  moonMesh.visible = false;
+  group.add(moonMesh);
+
+  geometries.push(nightDomeGeo, moonGeo);
+  materials.push(nightDomeMat, moonMat, sky.material);
+
+  // ==================== 9. LIGHTING ====================
+  const hemiLight = new THREE.HemisphereLight(0x8ec5fc, 0x353c48, 1.0);
   group.add(hemiLight);
 
-  const keyLight = new THREE.DirectionalLight(0xcbd5e1, 0.92);
-  keyLight.position.set(22, 34, 18);
+  const keyLight = new THREE.DirectionalLight(0xfff6e5, 1.32);
+  keyLight.position.set(60, 78, 42);
   if (!isSoftwareGl) {
-    keyLight.castShadow = true;
+    keyLight.castShadow = false;
     keyLight.shadow.mapSize.set(1024, 1024);
     keyLight.shadow.camera.near = 2;
-    keyLight.shadow.camera.far = 90;
-    keyLight.shadow.camera.left = -28;
-    keyLight.shadow.camera.right = 28;
-    keyLight.shadow.camera.top = 28;
-    keyLight.shadow.camera.bottom = -28;
+    keyLight.shadow.camera.far = 110;
+    keyLight.shadow.camera.left = -36;
+    keyLight.shadow.camera.right = 36;
+    keyLight.shadow.camera.top = 36;
+    keyLight.shadow.camera.bottom = -36;
     keyLight.shadow.bias = -0.0005;
   }
   group.add(keyLight);
+
+  // ==================== 6b. 4 HIGHWAY SPEED RADAR GANTRIES & 10 CONTRACT CHECKPOINTS ====================
+  const radarNodes: HighwayRadarNode[] = [];
+  const radarDefs = [
+    { id: 'radar_1', label: 'RADAR WANGAN NORTE', ratio: 0.14, limitKmh: 180 },
+    { id: 'radar_2', label: 'RADAR GINZA CURVA', ratio: 0.38, limitKmh: 200 },
+    { id: 'radar_3', label: 'RADAR SHIBAURA SUR', ratio: 0.64, limitKmh: 220 },
+    { id: 'radar_4', label: 'RADAR RECTA FINAL', ratio: 0.87, limitKmh: 240 },
+  ];
+  const radarSignGeo = new THREE.PlaneGeometry(4.8, 1.2);
+  const radarSignMat = new THREE.MeshStandardMaterial({
+    map: textures.radarSign,
+    emissiveMap: textures.radarSign,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.24,
+    side: THREE.DoubleSide,
+  });
+  const radarCamBoxGeo = new THREE.BoxGeometry(0.95, 0.55, 0.55);
+  const radarFlashGeo = new THREE.SphereGeometry(0.32, 10, 8);
+  const radarFlashMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    toneMapped: false,
+  });
+  const radarPostGeo = new THREE.CylinderGeometry(0.14, 0.18, 6.2, 8);
+  const radarArmGeo = new THREE.BoxGeometry(8.5, 0.24, 0.24);
+  geometries.push(radarSignGeo, radarCamBoxGeo, radarFlashGeo, radarPostGeo, radarArmGeo);
+  materials.push(radarSignMat, radarFlashMat);
+
+  for (const rd of radarDefs) {
+    const rs = track.wrapS(rd.ratio * track.totalLength);
+    track.sampleAtS(rs, sample);
+    const rg = new THREE.Group();
+    rg.position.set(sample.x, HIGHWAY_Y, sample.z);
+    rg.rotation.y = sample.yaw;
+
+    const rPost = new THREE.Mesh(radarPostGeo, gantrySteelMat);
+    rPost.position.set(11.3, 3.1, 0);
+    const rArm = new THREE.Mesh(radarArmGeo, gantrySteelMat);
+    rArm.position.set(7.2, 6.0, 0);
+    const rBoard = new THREE.Mesh(radarSignGeo, radarSignMat);
+    rBoard.position.set(5.6, 5.45, 0.22);
+    const rCam = new THREE.Mesh(radarCamBoxGeo, steelBlackMat);
+    rCam.position.set(3.2, 6.2, 0.15);
+    const flashMesh = new THREE.Mesh(radarFlashGeo, radarFlashMat);
+    flashMesh.position.set(3.2, 6.2, 0.45);
+    rg.add(rPost, rArm, rBoard, rCam, flashMesh);
+    group.add(rg);
+
+    radarNodes.push({
+      id: rd.id,
+      label: rd.label,
+      s: rs,
+      limitKmh: rd.limitKmh,
+      x: sample.x,
+      z: sample.z,
+      flashMesh,
+    });
+  }
+
+  // 10 Glowing Emerald Contract Express Highway Checkpoints (hidden until Contract is active)
+  const contractCheckpoints: ContractCheckpointNode[] = [];
+  const cpArchGeo = new THREE.TorusGeometry(9.6, 0.24, 8, 28, Math.PI);
+  const cpFloorStripGeo = new THREE.PlaneGeometry(20.0, 1.3);
+  cpFloorStripGeo.rotateX(-Math.PI / 2);
+  geometries.push(cpArchGeo, cpFloorStripGeo);
+
+  for (let i = 0; i < 10; i++) {
+    const cs = track.wrapS((0.09 + i * 0.088) * track.totalLength);
+    track.sampleAtS(cs, sample);
+    const cpMat = new THREE.MeshBasicMaterial({
+      color: 0x10b981,
+      transparent: true,
+      opacity: 0.78,
+      toneMapped: false,
+      side: THREE.DoubleSide,
+    });
+    materials.push(cpMat);
+
+    const cpGroup = new THREE.Group();
+    cpGroup.position.set(sample.x, HIGHWAY_Y + 0.04, sample.z);
+    cpGroup.rotation.y = sample.yaw;
+    cpGroup.visible = false;
+
+    const arch = new THREE.Mesh(cpArchGeo, cpMat);
+    const strip = new THREE.Mesh(cpFloorStripGeo, cpMat);
+    cpGroup.add(arch, strip);
+    group.add(cpGroup);
+
+    contractCheckpoints.push({
+      s: cs,
+      x: sample.x,
+      z: sample.z,
+      yaw: sample.yaw,
+      group: cpGroup,
+      ringMat: cpMat,
+    });
+  }
+
+  let currentQuality: GraphicsQuality = 'MEDIUM';
+  let currentViewDist: ViewDistance = 'MEDIUM';
+
+  const applyTowerCounts = () => {
+    const qRatio =
+      currentQuality === 'LOW'
+        ? lowTowerCount / placements.length
+        : currentQuality === 'MEDIUM'
+          ? coreTowerCount / placements.length
+          : 1;
+    const vdFactor = currentViewDist === 'SHORT' ? 0.65 : currentViewDist === 'MEDIUM' ? 0.85 : 1;
+    const ratio = Math.min(1, qRatio * vdFactor);
+    podiumInst.count = Math.max(1, Math.round(placements.length * ratio));
+    glassInst.count = Math.max(1, Math.round(glassPlacements.length * ratio));
+    concInst.count = Math.max(1, Math.round(concretePlacements.length * ratio));
+    warmCrownInst.count = Math.max(1, Math.round(warmPlacements.length * ratio));
+    coolCrownInst.count = Math.max(1, Math.round(coolPlacements.length * ratio));
+  };
+
+  const applyFogRange = (scene: THREE.Scene) => {
+    const fog = scene.fog;
+    if (fog instanceof THREE.Fog) {
+      if (currentViewDist === 'SHORT') {
+        fog.near = 100;
+        fog.far = 340;
+      } else if (currentViewDist === 'MEDIUM') {
+        fog.near = 165;
+        fog.far = 540;
+      } else {
+        fog.near = 250;
+        fog.far = 880;
+      }
+    }
+  };
+
+  const sunVec = new THREE.Vector3();
 
   return {
     group,
     parkingComplexGroup,
     track,
     showcaseEntries,
+    radarNodes,
+    contractCheckpoints,
     asphaltMat,
     roadMesh,
     cityGround,
@@ -1346,117 +2997,297 @@ export function buildMetropolisWorld(
     hemiLight,
     keyLight,
     setAtmosphere: (weather: WeatherMode, scene: THREE.Scene) => {
-      const isStorm = weather === 'STORM';
+      rainSystem.visible = false;
       const isSunset = weather === 'SUNSET';
-      rainSystem.visible = isStorm;
+      const isNight = weather === 'NIGHT';
 
-      if (isStorm) {
-        const fogHex = 0x070c16;
+      const skyUniforms = sky.material.uniforms;
+
+      if (isNight) {
+        sky.visible = false;
+        nightDome.visible = true;
+        moonMesh.visible = true;
+
+        const fogHex = 0x16284a;
         scene.background = new THREE.Color(fogHex);
-        (scene.fog as THREE.FogExp2).color.setHex(fogHex);
-        (scene.fog as THREE.FogExp2).density = 0.0058;
+        if (scene.fog instanceof THREE.Fog) {
+          scene.fog.color.setHex(fogHex);
+        } else if (scene.fog instanceof THREE.FogExp2) {
+          scene.fog.color.setHex(fogHex);
+          scene.fog.density = 0.0024;
+        }
+        applyFogRange(scene);
 
-        hemiLight.color.setHex(0x64748b);
-        hemiLight.groundColor.setHex(0x070a10);
-        hemiLight.intensity = 0.65;
-        keyLight.color.setHex(0x93c5fd);
-        keyLight.intensity = 0.82;
+        hemiLight.color.setHex(0x6c8ec4);
+        hemiLight.groundColor.setHex(0x101828);
+        hemiLight.intensity = 0.85;
+        keyLight.color.setHex(0xc4daf8);
+        keyLight.intensity = 0.96;
+        keyLight.position.set(-48, 68, -72);
 
-        asphaltMat.roughness = 0.14;
-        asphaltMat.metalness = 0.55;
-        asphaltMat.clearcoat = 1.0;
-        asphaltMat.clearcoatRoughness = 0.08;
-        asphaltMat.envMapIntensity = 1.9;
-        asphaltMat.color.setHex(0x1a202c);
+        cityGroundMat.color.setHex(0x101622);
+        taludMat.color.setHex(0x172b20);
 
-        parkPadMat.roughness = 0.18;
-        parkPadMat.clearcoat = 0.95;
+        asphaltMat.roughness = 0.66;
+        asphaltMat.metalness = 0.18;
+        asphaltMat.clearcoat = 0.16;
+        asphaltMat.clearcoatRoughness = 0.30;
+        asphaltMat.envMapIntensity = 0.78;
+        asphaltMat.color.setHex(0x28303d);
+
+        rampDeckMat.roughness = 0.66;
+        rampDeckMat.clearcoat = 0.14;
+        parkPadMat.roughness = 0.68;
+        parkPadMat.clearcoat = 0.14;
+
+        towerGlassMat.emissiveIntensity = 0.58;
+        towerConcreteMat.emissiveIntensity = 0.42;
+        crownWarmMat.emissiveIntensity = 0.55;
+        crownCoolMat.emissiveIntensity = 0.50;
+
+        hangarSignMat.emissiveIntensity = 0.46;
+        emblem78Mat.emissiveIntensity = 0.48;
+        tallerWallSignMat.emissiveIntensity = 0.42;
+        ghostGarageSignMat.emissiveIntensity = 0.42;
+        dealerSignMat.emissiveIntensity = 0.44;
+        lbFaceMat.emissiveIntensity = 0.40;
+        cmSignMat.emissiveIntensity = 0.44;
+        ctSignMat.emissiveIntensity = 0.44;
+        radarSignMat.emissiveIntensity = 0.42;
+        medianSignMat.emissiveIntensity = 0.42;
+        signMat1.emissiveIntensity = 0.38;
+        signMat2.emissiveIntensity = 0.38;
+        ledStripMat.emissiveIntensity = 0.58;
+        bulbGlowMat.emissiveIntensity = 0.68;
+        bollardMat.emissiveIntensity = 0.48;
+        barrierLedMat.emissiveIntensity = 0.52;
+        redAccentMat.emissiveIntensity = 0.38;
+        plinthTrimMat.emissiveIntensity = 0.35;
+        reflectorMat.emissiveIntensity = 0.65;
+
+        for (const pl of parkPointLights) {
+          pl.light.intensity = pl.nightIntensity;
+        }
       } else if (isSunset) {
-        const fogHex = 0x1a131f;
+        sky.visible = true;
+        nightDome.visible = false;
+        moonMesh.visible = false;
+
+        const phi = THREE.MathUtils.degToRad(90 - 4.2);
+        const theta = THREE.MathUtils.degToRad(-145);
+        sunVec.setFromSphericalCoords(1, phi, theta);
+        skyUniforms['sunPosition'].value.copy(sunVec);
+        skyUniforms['turbidity'].value = 8.2;
+        skyUniforms['rayleigh'].value = 2.4;
+        skyUniforms['mieCoefficient'].value = 0.0065;
+        skyUniforms['mieDirectionalG'].value = 0.84;
+        skyUniforms['cloudCoverage'].value = 0.46;
+        skyUniforms['cloudDensity'].value = 0.42;
+        skyUniforms['cloudElevation'].value = 0.52;
+        skyUniforms['showSunDisc'].value = 1;
+
+        const fogHex = 0xc58d72;
         scene.background = new THREE.Color(fogHex);
-        (scene.fog as THREE.FogExp2).color.setHex(fogHex);
-        (scene.fog as THREE.FogExp2).density = 0.0040;
+        if (scene.fog instanceof THREE.Fog) {
+          scene.fog.color.setHex(fogHex);
+        } else if (scene.fog instanceof THREE.FogExp2) {
+          scene.fog.color.setHex(fogHex);
+          scene.fog.density = 0.0018;
+        }
+        applyFogRange(scene);
 
-        hemiLight.color.setHex(0xfdba74);
-        hemiLight.groundColor.setHex(0x181320);
-        hemiLight.intensity = 0.82;
-        keyLight.color.setHex(0xffb478);
-        keyLight.intensity = 1.25;
+        hemiLight.color.setHex(0xffbe8a);
+        hemiLight.groundColor.setHex(0x2d2438);
+        hemiLight.intensity = 0.96;
+        keyLight.color.setHex(0xffac6c);
+        keyLight.intensity = 1.28;
+        keyLight.position.set(sunVec.x * 95, Math.max(18, sunVec.y * 95), sunVec.z * 95);
 
-        asphaltMat.roughness = 0.68;
-        asphaltMat.metalness = 0.2;
-        asphaltMat.clearcoat = 0.24;
-        asphaltMat.clearcoatRoughness = 0.3;
-        asphaltMat.envMapIntensity = 1.0;
-        asphaltMat.color.setHex(0x2d323e);
-
-        parkPadMat.roughness = 0.62;
-        parkPadMat.clearcoat = 0.25;
-      } else {
-        const fogHex = 0x050811;
-        scene.background = new THREE.Color(fogHex);
-        (scene.fog as THREE.FogExp2).color.setHex(fogHex);
-        (scene.fog as THREE.FogExp2).density = 0.0042;
-
-        hemiLight.color.setHex(0x93c5fd);
-        hemiLight.groundColor.setHex(0x0b0f17);
-        hemiLight.intensity = 0.7;
-        keyLight.color.setHex(0xdbeafe);
-        keyLight.intensity = 0.88;
+        cityGroundMat.color.setHex(0x1f222c);
+        taludMat.color.setHex(0x243b28);
 
         asphaltMat.roughness = 0.72;
-        asphaltMat.metalness = 0.16;
-        asphaltMat.clearcoat = 0.18;
-        asphaltMat.clearcoatRoughness = 0.35;
-        asphaltMat.envMapIntensity = 0.85;
-        asphaltMat.color.setHex(0x2c3340);
+        asphaltMat.metalness = 0.14;
+        asphaltMat.clearcoat = 0.10;
+        asphaltMat.clearcoatRoughness = 0.34;
+        asphaltMat.envMapIntensity = 0.70;
+        asphaltMat.color.setHex(0x363b47);
 
-        parkPadMat.roughness = 0.68;
-        parkPadMat.clearcoat = 0.22;
+        rampDeckMat.roughness = 0.70;
+        rampDeckMat.clearcoat = 0.10;
+        parkPadMat.roughness = 0.72;
+        parkPadMat.clearcoat = 0.08;
+
+        towerGlassMat.emissiveIntensity = 0.24;
+        towerConcreteMat.emissiveIntensity = 0.16;
+        crownWarmMat.emissiveIntensity = 0.32;
+        crownCoolMat.emissiveIntensity = 0.28;
+
+        hangarSignMat.emissiveIntensity = 0.26;
+        emblem78Mat.emissiveIntensity = 0.28;
+        tallerWallSignMat.emissiveIntensity = 0.24;
+        ghostGarageSignMat.emissiveIntensity = 0.24;
+        dealerSignMat.emissiveIntensity = 0.26;
+        lbFaceMat.emissiveIntensity = 0.22;
+        cmSignMat.emissiveIntensity = 0.24;
+        ctSignMat.emissiveIntensity = 0.24;
+        radarSignMat.emissiveIntensity = 0.24;
+        medianSignMat.emissiveIntensity = 0.24;
+        signMat1.emissiveIntensity = 0.20;
+        signMat2.emissiveIntensity = 0.20;
+        ledStripMat.emissiveIntensity = 0.38;
+        bulbGlowMat.emissiveIntensity = 0.38;
+        bollardMat.emissiveIntensity = 0.30;
+        barrierLedMat.emissiveIntensity = 0.35;
+        redAccentMat.emissiveIntensity = 0.24;
+        plinthTrimMat.emissiveIntensity = 0.24;
+        reflectorMat.emissiveIntensity = 0.45;
+
+        for (const pl of parkPointLights) {
+          pl.light.intensity = pl.nightIntensity * 0.65;
+        }
+      } else {
+        // 'DAY' (Default: Día Soleado / Tarde Clara)
+        sky.visible = true;
+        nightDome.visible = false;
+        moonMesh.visible = false;
+
+        const phi = THREE.MathUtils.degToRad(90 - 32);
+        const theta = THREE.MathUtils.degToRad(-125);
+        sunVec.setFromSphericalCoords(1, phi, theta);
+        skyUniforms['sunPosition'].value.copy(sunVec);
+        skyUniforms['turbidity'].value = 2.6;
+        skyUniforms['rayleigh'].value = 1.25;
+        skyUniforms['mieCoefficient'].value = 0.0038;
+        skyUniforms['mieDirectionalG'].value = 0.78;
+        skyUniforms['cloudCoverage'].value = 0.38;
+        skyUniforms['cloudDensity'].value = 0.42;
+        skyUniforms['cloudElevation'].value = 0.56;
+        skyUniforms['showSunDisc'].value = 1;
+
+        const fogHex = 0xaacae8;
+        scene.background = new THREE.Color(fogHex);
+        if (scene.fog instanceof THREE.Fog) {
+          scene.fog.color.setHex(fogHex);
+        } else if (scene.fog instanceof THREE.FogExp2) {
+          scene.fog.color.setHex(fogHex);
+          scene.fog.density = 0.0014;
+        }
+        applyFogRange(scene);
+
+        hemiLight.color.setHex(0x8ec5fc);
+        hemiLight.groundColor.setHex(0x3a4250);
+        hemiLight.intensity = 1.05;
+        keyLight.color.setHex(0xfff4e0);
+        keyLight.intensity = 1.32;
+        keyLight.position.set(sunVec.x * 100, Math.max(38, sunVec.y * 100), sunVec.z * 100);
+
+        cityGroundMat.color.setHex(0x212833);
+        taludMat.color.setHex(0x284730);
+
+        asphaltMat.roughness = 0.78;
+        asphaltMat.metalness = 0.12;
+        asphaltMat.clearcoat = 0.06;
+        asphaltMat.clearcoatRoughness = 0.40;
+        asphaltMat.envMapIntensity = 0.55;
+        asphaltMat.color.setHex(0x3a414e);
+
+        rampDeckMat.roughness = 0.76;
+        rampDeckMat.clearcoat = 0.05;
+        parkPadMat.roughness = 0.78;
+        parkPadMat.clearcoat = 0.05;
+
+        towerGlassMat.emissiveIntensity = 0.04;
+        towerConcreteMat.emissiveIntensity = 0.02;
+        crownWarmMat.emissiveIntensity = 0.12;
+        crownCoolMat.emissiveIntensity = 0.12;
+
+        hangarSignMat.emissiveIntensity = 0.16;
+        emblem78Mat.emissiveIntensity = 0.18;
+        tallerWallSignMat.emissiveIntensity = 0.14;
+        ghostGarageSignMat.emissiveIntensity = 0.14;
+        dealerSignMat.emissiveIntensity = 0.16;
+        lbFaceMat.emissiveIntensity = 0.14;
+        cmSignMat.emissiveIntensity = 0.16;
+        ctSignMat.emissiveIntensity = 0.16;
+        radarSignMat.emissiveIntensity = 0.16;
+        medianSignMat.emissiveIntensity = 0.16;
+        signMat1.emissiveIntensity = 0.14;
+        signMat2.emissiveIntensity = 0.14;
+        ledStripMat.emissiveIntensity = 0.28;
+        bulbGlowMat.emissiveIntensity = 0.22;
+        bollardMat.emissiveIntensity = 0.20;
+        barrierLedMat.emissiveIntensity = 0.24;
+        redAccentMat.emissiveIntensity = 0.16;
+        plinthTrimMat.emissiveIntensity = 0.16;
+        reflectorMat.emissiveIntensity = 0.30;
+
+        for (const pl of parkPointLights) {
+          pl.light.intensity = pl.nightIntensity * 0.42;
+        }
       }
       asphaltMat.needsUpdate = true;
+      rampDeckMat.needsUpdate = true;
       parkPadMat.needsUpdate = true;
     },
     setQuality: (quality: GraphicsQuality) => {
-      const ratio = quality === 'LOW' ? lowTowerCount / placements.length : quality === 'MEDIUM' ? coreTowerCount / placements.length : 1;
-      podiumInst.count = Math.max(1, Math.round(placements.length * ratio));
-      glassInst.count = Math.max(1, Math.round(glassPlacements.length * ratio));
-      concInst.count = Math.max(1, Math.round(concretePlacements.length * ratio));
-      warmCrownInst.count = Math.max(1, Math.round(warmPlacements.length * ratio));
-      coolCrownInst.count = Math.max(1, Math.round(coolPlacements.length * ratio));
+      currentQuality = quality;
+      applyTowerCounts();
+
+      const shadowsOn = !isSoftwareGl && quality === 'HIGH';
+      keyLight.castShadow = shadowsOn;
+      cityGround.receiveShadow = shadowsOn;
+      roadMesh.receiveShadow = shadowsOn;
+      rampDeckMesh.receiveShadow = shadowsOn;
+      rampMergeDeckMesh.receiveShadow = shadowsOn;
+      taludLMesh.receiveShadow = shadowsOn;
+      taludRMesh.receiveShadow = shadowsOn;
+      parkPad.receiveShadow = shadowsOn;
+      accessApron.receiveShadow = shadowsOn;
+      crosswalkApron.receiveShadow = shadowsOn;
+      hangarFloor.receiveShadow = shadowsOn;
+      dealerPad.receiveShadow = shadowsOn;
+
+      if (shadowsOn) {
+        const targetSize = 1024;
+        if (keyLight.shadow.mapSize.x !== targetSize) {
+          keyLight.shadow.mapSize.set(targetSize, targetSize);
+          keyLight.shadow.map?.dispose();
+          keyLight.shadow.map = null;
+        }
+      }
+    },
+    setViewDistance: (
+      viewDist: ViewDistance,
+      scene: THREE.Scene,
+      camera: THREE.PerspectiveCamera
+    ) => {
+      currentViewDist = viewDist;
+      camera.far = viewDist === 'SHORT' ? 360 : viewDist === 'MEDIUM' ? 560 : 920;
+      camera.updateProjectionMatrix();
+      applyFogRange(scene);
+      applyTowerCounts();
     },
     updateScroll: (
       anchorX: number,
       anchorZ: number,
-      speedMs: number,
+      _anchorY: number,
+      _speedMs: number,
       dt: number,
-      isStorm: boolean,
+      _isStorm: boolean,
       inParking: boolean
     ) => {
-      if (isStorm) {
-        const rainAnchorX = inParking ? 22 : anchorX;
-        const rainAnchorZ = inParking ? -2 : anchorZ;
-        rainSystem.position.set(rainAnchorX, 0, rainAnchorZ);
-        const dropSpeed = 24;
-        const streakZ = Math.min(2.2, 0.35 + speedMs * 0.025);
-        for (let i = 0; i < rainCount; i++) {
-          const idx = i * 6;
-          rainPositions[idx + 1] -= dropSpeed * dt;
-          rainPositions[idx + 4] = rainPositions[idx + 1] + 0.82;
-          rainPositions[idx + 5] = rainPositions[idx + 2] + streakZ;
-          if (rainPositions[idx + 1] < 0) {
-            const nx = (Math.random() - 0.5) * 32;
-            const ny = 12 + Math.random() * 4;
-            const nz = (Math.random() - 0.5) * 44;
-            rainPositions[idx] = nx;
-            rainPositions[idx + 1] = ny;
-            rainPositions[idx + 2] = nz;
-            rainPositions[idx + 3] = nx - 0.08;
-            rainPositions[idx + 4] = ny + 0.82;
-            rainPositions[idx + 5] = nz + streakZ;
-          }
-        }
-        (rainSystem.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+      // Drift clouds slowly & keep night sky dome centered around viewer
+      const skyU = sky.material.uniforms;
+      if (sky.visible && skyU['time']) {
+        skyU['time'].value += dt;
+      }
+      if (nightDome.visible) {
+        nightDomeMat.uniforms['uTime'].value += dt;
+        const cx = inParking ? 38 : anchorX;
+        const cz = inParking ? 10 : anchorZ;
+        nightDome.position.set(cx, 0, cz);
+        moonMesh.position.set(cx - 420, 390, cz - 820);
       }
     },
     dispose: () => {

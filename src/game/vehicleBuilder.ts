@@ -18,6 +18,7 @@ export interface BuiltVehicle {
   wheels: THREE.Group[];
   paintMat: THREE.MeshPhysicalMaterial;
   rimMat: THREE.MeshStandardMaterial;
+  rotorMat: THREE.MeshStandardMaterial;
   glassMat: THREE.MeshPhysicalMaterial;
   headLedMat: THREE.MeshStandardMaterial;
   tailLedMat: THREE.MeshStandardMaterial;
@@ -32,11 +33,29 @@ export interface BuiltVehicle {
   flameRight: THREE.Mesh;
   backfireLeft: THREE.Mesh;
   backfireRight: THREE.Mesh;
+  backfireOuterMat: THREE.MeshBasicMaterial;
+  backfireCoreMat: THREE.MeshBasicMaterial;
   backfireSparks: THREE.Mesh[];
   backfireLight: THREE.PointLight | null;
+  cockpitGroup: THREE.Group | null;
+  kingCrownGroup: THREE.Group | null;
   updatePlateText: (text: string) => void;
   applyPaintFinish: (finish: PaintFinish) => void;
   applyWindowTint: (tint: WindowTintOption) => void;
+  setHeadlightsOn: (on: boolean) => void;
+  flashHighBeams: (on: boolean) => void;
+  setBrakeHeat: (heat01: number) => void;
+  setInteriorCockpitMode: (enabled: boolean) => void;
+  updateCockpit: (
+    steerAngle: number,
+    rpm: number,
+    maxRpm: number,
+    speedKmh: number,
+    gear: number,
+    nitro: number
+  ) => void;
+  setKingCrown: (active: boolean) => void;
+  updateVisualPulse: (time: number, isChameleon: boolean, isPulseNeon: boolean) => void;
   dispose: () => void;
 }
 
@@ -505,39 +524,54 @@ function applyFinishParams(
     mat.roughness = 0.38;
     mat.clearcoat = 0.45;
     mat.clearcoatRoughness = 0.08;
+    mat.iridescence = 0;
     mat.envMapIntensity = 0.72;
     mat.needsUpdate = true;
     return;
   }
   if (finish === 'matte') {
     mat.metalness = 0.14;
-    mat.roughness = 0.72;
-    mat.clearcoat = 0.06;
+    mat.roughness = 0.74;
+    mat.clearcoat = 0.04;
     mat.clearcoatRoughness = 0.55;
-    mat.specularIntensity = 0.35;
-    mat.envMapIntensity = 0.48;
+    mat.iridescence = 0;
+    mat.specularIntensity = 0.28;
+    mat.envMapIntensity = 0.42;
   } else if (finish === 'metallic') {
     mat.metalness = 0.74;
-    mat.roughness = 0.25;
-    mat.clearcoat = 0.96;
-    mat.clearcoatRoughness = 0.07;
-    mat.specularIntensity = 0.8;
-    mat.envMapIntensity = 1.15;
+    mat.roughness = 0.24;
+    mat.clearcoat = 0.82;
+    mat.clearcoatRoughness = 0.08;
+    mat.iridescence = 0;
+    mat.specularIntensity = 0.65;
+    mat.envMapIntensity = 0.96;
   } else if (finish === 'chrome') {
-    mat.metalness = 0.98;
-    mat.roughness = 0.05;
-    mat.clearcoat = 1.0;
-    mat.clearcoatRoughness = 0.02;
-    mat.specularIntensity = 1.0;
-    mat.envMapIntensity = 1.65;
+    mat.metalness = 0.96;
+    mat.roughness = 0.08;
+    mat.clearcoat = 0.9;
+    mat.clearcoatRoughness = 0.04;
+    mat.iridescence = 0;
+    mat.specularIntensity = 0.82;
+    mat.envMapIntensity = 1.15;
+  } else if (finish === 'chameleon') {
+    mat.metalness = 0.84;
+    mat.roughness = 0.16;
+    mat.clearcoat = 0.86;
+    mat.clearcoatRoughness = 0.06;
+    mat.iridescence = 1.0;
+    mat.iridescenceIOR = 1.48;
+    mat.iridescenceThicknessRange = [180, 620];
+    mat.specularIntensity = 0.80;
+    mat.envMapIntensity = 1.12;
   } else {
     // 'gloss'
-    mat.metalness = 0.30;
+    mat.metalness = 0.26;
     mat.roughness = 0.22;
-    mat.clearcoat = 1.0;
-    mat.clearcoatRoughness = 0.05;
-    mat.specularIntensity = 0.68;
-    mat.envMapIntensity = 0.80;
+    mat.clearcoat = 0.78;
+    mat.clearcoatRoughness = 0.08;
+    mat.iridescence = 0;
+    mat.specularIntensity = 0.56;
+    mat.envMapIntensity = 0.88;
   }
   mat.needsUpdate = true;
 }
@@ -639,14 +673,20 @@ export function buildCompositeVehicle(options: {
     flatShading: false,
   });
   const rotorMat = new THREE.MeshStandardMaterial({
-    color: 0x94a3b8,
-    metalness: 0.85,
-    roughness: 0.28,
+    map: options.textures.brakeRotor,
+    color: 0xcbd5e1,
+    metalness: 0.88,
+    roughness: 0.25,
+    emissive: new THREE.Color(0xff4500),
+    emissiveIntensity: 0,
     flatShading: false,
   });
   const tireMat = new THREE.MeshStandardMaterial({
-    color: 0x121418,
-    roughness: 0.86,
+    map: options.textures.tireTread,
+    bumpMap: options.textures.tireTreadBump,
+    bumpScale: 0.012,
+    color: 0x161920,
+    roughness: 0.84,
     metalness: 0.06,
     flatShading: false,
   });
@@ -678,7 +718,16 @@ export function buildCompositeVehicle(options: {
   const glassMesh = new THREE.Mesh(glassGeo, glassMat);
   chassisGroup.add(glassMesh);
 
-  // 1b. Interior Accessories (Seats, Dash, Sport Steering Wheel, Starlight Headliner) for Player Cars
+  // 1b. Exterior-visible Interior Accessories + Hyperrealistic First-Person Cockpit Rig
+  let exteriorDash: THREE.Mesh | null = null;
+  let exteriorWheelGroup: THREE.Group | null = null;
+  let cockpitGroup: THREE.Group | null = null;
+  let cockpitWheelGroup: THREE.Group | null = null;
+  let cockpitGaugeCanvas: HTMLCanvasElement | null = null;
+  let cockpitGaugeCtx: CanvasRenderingContext2D | null = null;
+  let cockpitGaugeTex: THREE.CanvasTexture | null = null;
+  let lastCockpitRedrawTime = 0;
+
   if (!options.isTraffic) {
     const dashGeo = new THREE.BoxGeometry(dims.cabinWidth * 0.72, 0.14, 0.24);
     const seatBackGeo = new THREE.BoxGeometry(0.34, 0.44, 0.1);
@@ -686,9 +735,9 @@ export function buildCompositeVehicle(options: {
     const steerSpokeGeo = new THREE.BoxGeometry(0.20, 0.02, 0.018);
     geometries.push(dashGeo, seatBackGeo, steerWheelGeo, steerSpokeGeo);
 
-    const dash = new THREE.Mesh(dashGeo, trimDarkMat);
-    dash.position.set(0, 0.76, dims.frontAxleZ + 0.92);
-    chassisGroup.add(dash);
+    exteriorDash = new THREE.Mesh(dashGeo, trimDarkMat);
+    exteriorDash.position.set(0, 0.76, dims.frontAxleZ + 0.92);
+    chassisGroup.add(exteriorDash);
 
     for (const sx of [-0.30, 0.30]) {
       const seat = new THREE.Mesh(seatBackGeo, trimDarkMat);
@@ -697,21 +746,130 @@ export function buildCompositeVehicle(options: {
       chassisGroup.add(seat);
     }
 
-    const wheelGroup = new THREE.Group();
+    exteriorWheelGroup = new THREE.Group();
     const swMat = options.sportSteering ? carbonMat : trimDarkMat;
     const sw = new THREE.Mesh(steerWheelGeo, swMat);
     const swSpoke = new THREE.Mesh(steerSpokeGeo, rimMat);
-    wheelGroup.add(sw, swSpoke);
+    exteriorWheelGroup.add(sw, swSpoke);
     if (options.sportSteering) {
       const markerGeo = new THREE.BoxGeometry(0.028, 0.028, 0.042);
       geometries.push(markerGeo);
       const marker = new THREE.Mesh(markerGeo, caliperMat);
       marker.position.set(0, 0.115, 0);
-      wheelGroup.add(marker);
+      exteriorWheelGroup.add(marker);
     }
-    wheelGroup.position.set(-0.30, 0.85, dims.frontAxleZ + 1.05);
-    wheelGroup.rotation.x = -0.35;
-    chassisGroup.add(wheelGroup);
+    exteriorWheelGroup.position.set(-0.30, 0.85, dims.frontAxleZ + 1.05);
+    exteriorWheelGroup.rotation.x = -0.35;
+    chassisGroup.add(exteriorWheelGroup);
+
+    // High-Detail 1st-Person Cockpit Group (Shown in HOOD / Cockpit Cam)
+    cockpitGroup = new THREE.Group();
+    cockpitGroup.visible = false;
+    chassisGroup.add(cockpitGroup);
+
+    const cpDashGeo = new THREE.BoxGeometry(dims.cabinWidth * 0.88, 0.22, 0.38);
+    const cpHoodGeo = new THREE.BoxGeometry(0.36, 0.13, 0.18);
+    const cpClusterScreenGeo = new THREE.PlaneGeometry(0.31, 0.105);
+    const cpPillarGeo = new THREE.BoxGeometry(0.075, 0.56, 0.08);
+    const cpSunstripGeo = new THREE.BoxGeometry(dims.cabinWidth * 0.92, 0.08, 0.12);
+    const cpRoofPlateGeo = new THREE.BoxGeometry(dims.cabinWidth * 0.88, 0.03, 1.35);
+    const cpWheelRimGeo = new THREE.TorusGeometry(0.132, 0.020, 10, 24);
+    const cpWheelHubGeo = new THREE.CylinderGeometry(0.045, 0.045, 0.04, 14);
+    cpWheelHubGeo.rotateX(Math.PI / 2);
+    const cpWheelSpokeGeo = new THREE.BoxGeometry(0.24, 0.024, 0.018);
+    const cpGloveGeo = new THREE.SphereGeometry(0.036, 10, 8);
+    cpGloveGeo.scale(0.82, 1.28, 0.92);
+    const cpArmGeo = new THREE.CylinderGeometry(0.028, 0.034, 0.24, 8);
+    cpArmGeo.rotateX(Math.PI / 2);
+    geometries.push(
+      cpDashGeo,
+      cpHoodGeo,
+      cpClusterScreenGeo,
+      cpPillarGeo,
+      cpSunstripGeo,
+      cpRoofPlateGeo,
+      cpWheelRimGeo,
+      cpWheelHubGeo,
+      cpWheelSpokeGeo,
+      cpGloveGeo,
+      cpArmGeo
+    );
+
+    const cpDash = new THREE.Mesh(cpDashGeo, trimDarkMat);
+    cpDash.position.set(0, 0.72, dims.frontAxleZ + 0.88);
+    cockpitGroup.add(cpDash);
+
+    const cpBinnacle = new THREE.Mesh(cpHoodGeo, carbonMat);
+    cpBinnacle.position.set(-0.30, 0.87, dims.frontAxleZ + 0.92);
+    cockpitGroup.add(cpBinnacle);
+
+    cockpitGaugeCanvas = document.createElement('canvas');
+    cockpitGaugeCanvas.width = 512;
+    cockpitGaugeCanvas.height = 192;
+    cockpitGaugeCtx = cockpitGaugeCanvas.getContext('2d');
+    cockpitGaugeTex = new THREE.CanvasTexture(cockpitGaugeCanvas);
+    cockpitGaugeTex.colorSpace = THREE.SRGBColorSpace;
+    disposableTextures.push(cockpitGaugeTex);
+
+    const cpScreenMat = new THREE.MeshBasicMaterial({
+      map: cockpitGaugeTex,
+      toneMapped: false,
+    });
+    materials.push(cpScreenMat);
+    const cpScreen = new THREE.Mesh(cpClusterScreenGeo, cpScreenMat);
+    cpScreen.position.set(-0.30, 0.875, dims.frontAxleZ + 1.015);
+    cpScreen.rotation.x = -0.18;
+    cockpitGroup.add(cpScreen);
+
+    // A-Pillars + Windshield Top Sunstrip + Roof Liner
+    for (const side of [-1, 1]) {
+      const pillar = new THREE.Mesh(cpPillarGeo, trimDarkMat);
+      pillar.position.set(side * (dims.cabinWidth * 0.44), 0.98, dims.frontAxleZ + 1.05);
+      pillar.rotation.x = -0.68;
+      pillar.rotation.z = side * 0.14;
+      cockpitGroup.add(pillar);
+    }
+    const sunstrip = new THREE.Mesh(cpSunstripGeo, trimDarkMat);
+    sunstrip.position.set(0, 1.15, dims.frontAxleZ + 1.24);
+    const roofPlate = new THREE.Mesh(cpRoofPlateGeo, trimDarkMat);
+    roofPlate.position.set(0, 1.18, dims.frontAxleZ + 1.88);
+    cockpitGroup.add(sunstrip, roofPlate);
+
+    // Rotating Steering Wheel + 3D Gloved Driver Hands
+    cockpitWheelGroup = new THREE.Group();
+    cockpitWheelGroup.position.set(-0.30, 0.82, dims.frontAxleZ + 1.16);
+    cockpitWheelGroup.rotation.x = -0.28;
+
+    const cpRim = new THREE.Mesh(cpWheelRimGeo, swMat);
+    const cpHub = new THREE.Mesh(cpWheelHubGeo, trimDarkMat);
+    const cpSpoke = new THREE.Mesh(cpWheelSpokeGeo, rimMat);
+    const cpMarkerGeo = new THREE.BoxGeometry(0.024, 0.026, 0.044);
+    geometries.push(cpMarkerGeo);
+    const cpMarker = new THREE.Mesh(cpMarkerGeo, caliperMat);
+    cpMarker.position.set(0, 0.132, 0);
+    cockpitWheelGroup.add(cpRim, cpHub, cpSpoke, cpMarker);
+
+    const gloveMat = new THREE.MeshStandardMaterial({
+      color: 0x1e293b,
+      roughness: 0.55,
+      metalness: 0.12,
+    });
+    const sleeveMat = new THREE.MeshStandardMaterial({
+      color: 0x0f172a,
+      roughness: 0.72,
+    });
+    materials.push(gloveMat, sleeveMat);
+
+    for (const side of [-1, 1]) {
+      const hand = new THREE.Mesh(cpGloveGeo, gloveMat);
+      hand.position.set(side * 0.128, 0.022, 0.014);
+      const forearm = new THREE.Mesh(cpArmGeo, sleeveMat);
+      forearm.position.set(side * 0.16, -0.045, 0.13);
+      forearm.rotation.y = side * -0.22;
+      forearm.rotation.x = 0.25;
+      cockpitWheelGroup.add(hand, forearm);
+    }
+    cockpitGroup.add(cockpitWheelGroup);
 
     if (options.starlightRoof) {
       const starGeo = new THREE.SphereGeometry(0.011, 6, 6);
@@ -724,6 +882,10 @@ export function buildCompositeVehicle(options: {
           const star = new THREE.Mesh(starGeo, starMat);
           star.position.set(c * 0.19, roofY, -0.25 + r * 0.18);
           chassisGroup.add(star);
+
+          const cpStar = new THREE.Mesh(starGeo, starMat);
+          cpStar.position.set(c * 0.18, 1.155, dims.frontAxleZ + 1.55 + r * 0.22);
+          cockpitGroup.add(cpStar);
         }
       }
     }
@@ -1041,14 +1203,14 @@ export function buildCompositeVehicle(options: {
   const backfireOuterMat = new THREE.MeshBasicMaterial({
     color: 0xff6b00,
     transparent: true,
-    opacity: 0,
+    opacity: 0.90,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   });
   const backfireCoreMat = new THREE.MeshBasicMaterial({
-    color: 0x60a5fa,
+    color: 0x38bdf8,
     transparent: true,
-    opacity: 0,
+    opacity: 0.96,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   });
@@ -1069,14 +1231,16 @@ export function buildCompositeVehicle(options: {
 
   const backfireLeft = new THREE.Mesh(backfireOuterGeo, backfireOuterMat);
   backfireLeft.position.set(-flameX, 0.25, dims.tailZ + 0.36);
+  backfireLeft.visible = false;
   const bfCoreL = new THREE.Mesh(backfireCoreGeo, backfireCoreMat);
-  bfCoreL.position.set(0, 0, -0.10);
+  bfCoreL.position.set(0, 0, -0.08);
   backfireLeft.add(bfCoreL);
 
   const backfireRight = new THREE.Mesh(backfireOuterGeo, backfireOuterMat);
   backfireRight.position.set(flameX, 0.25, dims.tailZ + 0.36);
+  backfireRight.visible = false;
   const bfCoreR = new THREE.Mesh(backfireCoreGeo, backfireCoreMat);
-  bfCoreR.position.set(0, 0, -0.10);
+  bfCoreR.position.set(0, 0, -0.08);
   backfireRight.add(bfCoreR);
 
   const backfireSparks: THREE.Mesh[] = [];
@@ -1102,18 +1266,16 @@ export function buildCompositeVehicle(options: {
 
   // 6. Modern Glowing LED Headlight & Taillight Strips
   const headLedMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    emissive: new THREE.Color(0xdbeafe),
-    emissiveIntensity: 2.6,
-    roughness: 0.1,
-    toneMapped: false,
+    color: 0xe2e8f0,
+    emissive: new THREE.Color(0xc7dcf5),
+    emissiveIntensity: 1.15,
+    roughness: 0.18,
   });
   const tailLedMat = new THREE.MeshStandardMaterial({
-    color: 0xff2a36,
-    emissive: new THREE.Color(0xff1e2d),
-    emissiveIntensity: 2.8,
-    roughness: 0.1,
-    toneMapped: false,
+    color: 0xe11d2a,
+    emissive: new THREE.Color(0xdc2626),
+    emissiveIntensity: 1.35,
+    roughness: 0.16,
   });
   materials.push(headLedMat, tailLedMat);
 
@@ -1132,6 +1294,44 @@ export function buildCompositeVehicle(options: {
     const pod = new THREE.Mesh(headClusterGeo, headLedMat);
     pod.position.set(side * (dims.bodyWidth * 0.32), dims.headlightY + 0.035, dims.noseZ + 0.06);
     chassisGroup.add(pod);
+  }
+
+  // Real Headlight SpotLights + Projected Ground Light Cones (for Lobby & Night Driving)
+  const headSpotLights: THREE.SpotLight[] = [];
+  const headBeamMeshes: THREE.Mesh[] = [];
+  if (!options.isTraffic) {
+    const beamConeGeo = new THREE.PlaneGeometry(4.4, 15.5);
+    beamConeGeo.rotateX(-Math.PI / 2);
+    beamConeGeo.translate(0, 0, -8.2);
+    const beamMat = new THREE.MeshBasicMaterial({
+      map: options.textures.underglowRadial,
+      color: 0xe0f2fe,
+      transparent: true,
+      opacity: 0.28,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    geometries.push(beamConeGeo);
+    materials.push(beamMat);
+
+    for (const side of [-1, 1]) {
+      const poolMesh = new THREE.Mesh(beamConeGeo, beamMat);
+      poolMesh.position.set(side * (dims.bodyWidth * 0.28), 0.03, dims.noseZ);
+      poolMesh.rotation.y = side * -0.06;
+      poolMesh.visible = false;
+      root.add(poolMesh);
+      headBeamMeshes.push(poolMesh);
+
+      if (!options.isSoftwareGl) {
+        const spot = new THREE.SpotLight(0xf0f9ff, 0, 34, Math.PI / 5.2, 0.52, 1.35);
+        spot.position.set(side * (dims.bodyWidth * 0.31), dims.headlightY + 0.04, dims.noseZ + 0.02);
+        spot.target.position.set(side * 1.1, 0.0, dims.noseZ - 13.0);
+        spot.visible = false;
+        chassisGroup.add(spot);
+        chassisGroup.add(spot.target);
+        headSpotLights.push(spot);
+      }
+    }
   }
 
   // Full-width / twin sleek LED taillight bar
@@ -1203,11 +1403,32 @@ export function buildCompositeVehicle(options: {
     { x: wheelTrackX, y: dims.tireRadius, z: dims.rearAxleZ },
   ];
 
+  const sidewallPlaneGeo = !options.isTraffic
+    ? new THREE.PlaneGeometry(dims.tireRadius * 1.96, dims.tireRadius * 1.96)
+    : null;
+  const sidewallMat = !options.isTraffic
+    ? new THREE.MeshBasicMaterial({
+        map: options.textures.tireSidewall,
+        transparent: true,
+        opacity: 0.92,
+        depthWrite: false,
+      })
+    : null;
+  if (sidewallPlaneGeo) geometries.push(sidewallPlaneGeo);
+  if (sidewallMat) materials.push(sidewallMat);
+
   for (const wc of wheelCoords) {
     const wg = new THREE.Group();
     const tire = new THREE.Mesh(tireGeo, tireMat);
     tire.castShadow = !options.isTraffic;
     wg.add(tire);
+
+    if (sidewallPlaneGeo && sidewallMat) {
+      const swDecal = new THREE.Mesh(sidewallPlaneGeo, sidewallMat);
+      swDecal.rotation.y = wc.x > 0 ? Math.PI / 2 : -Math.PI / 2;
+      swDecal.position.x = wc.x > 0 ? tireWidth * 0.485 : -tireWidth * 0.485;
+      wg.add(swDecal);
+    }
 
     const barrel = new THREE.Mesh(rimBarrelGeo, trimDarkMat);
     wg.add(barrel);
@@ -1282,14 +1503,15 @@ export function buildCompositeVehicle(options: {
     root.add(ws);
   }
 
-  // 9. Customizable Underglow Neon Beneath Chassis + Spawn Pulse Ring
+  // 9. Customizable Underglow Neon Beneath Chassis + Spawn Pulse Ring + King Crown
   const ugGeo = new THREE.PlaneGeometry(dims.bodyWidth + 1.0, 5.4);
   ugGeo.rotateX(-Math.PI / 2);
   geometries.push(ugGeo);
   const hasUg = options.underglowHex !== 'none' && !options.isTraffic;
+  const resolvedUgHex = options.underglowHex === 'pulse_neon' ? '#38bdf8' : options.underglowHex;
   const underglowMat = new THREE.MeshBasicMaterial({
     map: options.textures.underglowRadial,
-    color: new THREE.Color(hasUg ? options.underglowHex : '#000000'),
+    color: new THREE.Color(hasUg ? resolvedUgHex : '#000000'),
     transparent: true,
     opacity: hasUg ? 0.88 : 0,
     blending: THREE.AdditiveBlending,
@@ -1323,7 +1545,7 @@ export function buildCompositeVehicle(options: {
   let underglowLight: THREE.PointLight | null = null;
   if (!options.isTraffic && !options.isSoftwareGl) {
     underglowLight = new THREE.PointLight(
-      hasUg ? options.underglowHex : '#0ea5e9',
+      hasUg ? resolvedUgHex : '#0ea5e9',
       hasUg ? 2.4 : 0,
       7.8,
       1.8
@@ -1332,12 +1554,47 @@ export function buildCompositeVehicle(options: {
     root.add(underglowLight);
   }
 
+  // Floating Golden 3D King Crown ("Rey de la Autopista")
+  let kingCrownGroup: THREE.Group | null = null;
+  if (!options.isTraffic) {
+    kingCrownGroup = new THREE.Group();
+    const crownBandGeo = new THREE.CylinderGeometry(0.24, 0.20, 0.11, 12, 1, true);
+    const crownSpikeGeo = new THREE.ConeGeometry(0.055, 0.16, 6);
+    const crownMat = new THREE.MeshStandardMaterial({
+      color: 0xfacc15,
+      emissive: new THREE.Color(0xf59e0b),
+      emissiveIntensity: 1.4,
+      metalness: 0.9,
+      roughness: 0.16,
+      side: THREE.DoubleSide,
+    });
+    geometries.push(crownBandGeo, crownSpikeGeo);
+    materials.push(crownMat);
+    const band = new THREE.Mesh(crownBandGeo, crownMat);
+    kingCrownGroup.add(band);
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      const spike = new THREE.Mesh(crownSpikeGeo, crownMat);
+      spike.position.set(Math.cos(a) * 0.21, 0.11, Math.sin(a) * 0.21);
+      kingCrownGroup.add(spike);
+    }
+    kingCrownGroup.position.set(0, 1.62, -0.15);
+    kingCrownGroup.visible = false;
+    root.add(kingCrownGroup);
+  }
+
+  const tmpColor = new THREE.Color();
+  const basePaintColor = new THREE.Color(options.paintHex);
+
+  let headlightsActive = false;
+
   return {
     root,
     chassisGroup,
     wheels,
     paintMat,
     rimMat,
+    rotorMat,
     glassMat,
     headLedMat,
     tailLedMat,
@@ -1352,8 +1609,12 @@ export function buildCompositeVehicle(options: {
     flameRight,
     backfireLeft,
     backfireRight,
+    backfireOuterMat,
+    backfireCoreMat,
     backfireSparks,
     backfireLight,
+    cockpitGroup,
+    kingCrownGroup,
     updatePlateText: (text: string) => {
       if (!plateMat) return;
       const nextTex = createLicensePlateTexture(text);
@@ -1369,9 +1630,129 @@ export function buildCompositeVehicle(options: {
     },
     applyPaintFinish: (finish: PaintFinish) => {
       applyFinishParams(paintMat, finish, options.isTraffic);
+      if (finish !== 'chameleon') {
+        paintMat.color.copy(basePaintColor);
+      }
     },
     applyWindowTint: (tint: WindowTintOption) => {
       applyTintParams(glassMat, tint, options.isTraffic);
+    },
+    setHeadlightsOn: (on: boolean) => {
+      headlightsActive = on;
+      headLedMat.emissiveIntensity = on ? 1.45 : 0.75;
+      for (const spot of headSpotLights) {
+        spot.visible = on;
+        spot.intensity = on ? 12 : 0;
+      }
+      for (const pool of headBeamMeshes) {
+        pool.visible = on;
+        (pool.material as THREE.MeshBasicMaterial).opacity = on ? 0.14 : 0;
+      }
+    },
+    flashHighBeams: (on: boolean) => {
+      const showBeam = on || headlightsActive;
+      headLedMat.emissiveIntensity = on ? 2.8 : headlightsActive ? 1.45 : 0.75;
+      for (const spot of headSpotLights) {
+        spot.visible = showBeam;
+        spot.intensity = on ? 28 : headlightsActive ? 12 : 0;
+      }
+      for (const pool of headBeamMeshes) {
+        pool.visible = showBeam;
+        (pool.material as THREE.MeshBasicMaterial).opacity = on
+          ? 0.32
+          : headlightsActive
+            ? 0.14
+            : 0;
+      }
+    },
+    setBrakeHeat: (heat01: number) => {
+      const clamped = Math.min(1, Math.max(0, heat01));
+      rotorMat.emissiveIntensity = clamped * 2.3;
+    },
+    setInteriorCockpitMode: (enabled: boolean) => {
+      if (!cockpitGroup) return;
+      cabinMesh.visible = !enabled;
+      glassMesh.visible = !enabled;
+      if (exteriorDash) exteriorDash.visible = !enabled;
+      if (exteriorWheelGroup) exteriorWheelGroup.visible = !enabled;
+      cockpitGroup.visible = enabled;
+    },
+    updateCockpit: (steerAngle, rpm, maxRpm, speedKmh, gear, nitro) => {
+      if (!cockpitGroup || !cockpitGroup.visible) return;
+      if (cockpitWheelGroup) {
+        cockpitWheelGroup.rotation.z = steerAngle * 2.15;
+      }
+      const now = performance.now();
+      if (!cockpitGaugeCtx || !cockpitGaugeTex || now - lastCockpitRedrawTime < 45) return;
+      lastCockpitRedrawTime = now;
+
+      const ctx = cockpitGaugeCtx;
+      ctx.fillStyle = '#060910';
+      ctx.fillRect(0, 0, 512, 192);
+      ctx.strokeStyle = 'rgba(56,189,248,0.4)';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(4, 4, 504, 184);
+
+      const rpmRatio = Math.min(1, Math.max(0, rpm / Math.max(6000, maxRpm)));
+      const bars = 20;
+      const activeBars = Math.round(rpmRatio * bars);
+      for (let i = 0; i < bars; i++) {
+        ctx.fillStyle =
+          i < activeBars
+            ? i >= 16
+              ? '#ef4444'
+              : i >= 12
+                ? '#f59e0b'
+                : '#22d3ee'
+            : '#1e293b';
+        ctx.fillRect(22 + i * 23, 20, 18, 22);
+      }
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = '800 76px "Barlow Condensed", sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(`${Math.round(speedKmh)}`, 26, 128);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '700 22px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('KM/H', 155, 125);
+
+      const gearLbl = gear < 0 ? 'R' : gear === 0 ? 'N' : `${gear}`;
+      ctx.fillStyle = gear < 0 ? '#f87171' : gear === 0 ? '#94a3b8' : '#22d3ee';
+      ctx.font = '800 84px "Barlow Condensed", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(gearLbl, 340, 130);
+
+      // Nitro bar
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(26, 152, 460, 14);
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillRect(26, 152, Math.round(4.6 * Math.min(100, Math.max(0, nitro))), 14);
+
+      cockpitGaugeTex.needsUpdate = true;
+    },
+    setKingCrown: (active: boolean) => {
+      if (kingCrownGroup) kingCrownGroup.visible = active;
+    },
+    updateVisualPulse: (time: number, isChameleon: boolean, isPulseNeon: boolean) => {
+      if (isChameleon) {
+        const hue = (time * 0.09) % 1;
+        tmpColor.setHSL(hue, 0.72, 0.42);
+        paintMat.color.copy(tmpColor);
+      }
+      if (isPulseNeon && underglowMesh.visible) {
+        const hue = (time * 0.22) % 1;
+        tmpColor.setHSL(hue, 0.95, 0.56);
+        underglowMat.color.copy(tmpColor);
+        underglowMat.opacity = 0.72 + Math.sin(time * 5.5) * 0.22;
+        if (underglowLight) {
+          underglowLight.color.copy(tmpColor);
+          underglowLight.intensity = 2.0 + Math.sin(time * 5.5) * 0.9;
+        }
+      }
+      if (kingCrownGroup && kingCrownGroup.visible) {
+        kingCrownGroup.rotation.y = time * 1.4;
+        kingCrownGroup.position.y = 1.62 + Math.sin(time * 2.8) * 0.05;
+      }
     },
     dispose: () => {
       disposableTextures.forEach((t) => t.dispose());
@@ -1398,41 +1779,43 @@ export function buildDriverCharacter(textures: ProceduralTextureSet): DriverChar
 
   const jacketMat = new THREE.MeshStandardMaterial({
     color: 0x161b24,
-    roughness: 0.65,
-    metalness: 0.12,
+    roughness: 0.76,
+    metalness: 0.08,
   });
   const stripeMat = new THREE.MeshStandardMaterial({
-    color: 0xe10600,
-    roughness: 0.4,
-    metalness: 0.15,
+    color: 0xc81e1e,
+    roughness: 0.56,
+    metalness: 0.08,
   });
   const pantsMat = new THREE.MeshStandardMaterial({
-    color: 0x0f1218,
-    roughness: 0.8,
-    metalness: 0.05,
+    color: 0x11151d,
+    roughness: 0.84,
+    metalness: 0.04,
   });
   const shoeMat = new THREE.MeshStandardMaterial({
-    color: 0xe2e8f0,
-    roughness: 0.45,
-    metalness: 0.1,
+    color: 0xb4bec9,
+    roughness: 0.78,
+    metalness: 0.04,
   });
   const gloveMat = new THREE.MeshStandardMaterial({
     color: 0x1e293b,
-    roughness: 0.55,
-    metalness: 0.1,
+    roughness: 0.68,
+    metalness: 0.08,
   });
   const helmetMat = new THREE.MeshPhysicalMaterial({
-    color: 0xf1f5f9,
-    roughness: 0.12,
-    metalness: 0.25,
-    clearcoat: 1.0,
-    clearcoatRoughness: 0.05,
+    color: 0xd0d7e0,
+    roughness: 0.24,
+    metalness: 0.18,
+    clearcoat: 0.55,
+    clearcoatRoughness: 0.12,
+    envMapIntensity: 0.75,
   });
   const visorMat = new THREE.MeshPhysicalMaterial({
     color: 0x090d16,
-    roughness: 0.04,
-    metalness: 0.82,
-    clearcoat: 1.0,
+    roughness: 0.08,
+    metalness: 0.72,
+    clearcoat: 0.75,
+    envMapIntensity: 0.85,
   });
   materials.push(jacketMat, stripeMat, pantsMat, shoeMat, gloveMat, helmetMat, visorMat);
 

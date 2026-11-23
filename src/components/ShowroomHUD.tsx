@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
+  Award,
   Camera,
   Car,
   Check,
@@ -10,9 +11,15 @@ import {
   ChevronUp,
   Crosshair,
   Eye,
+  Flag,
+  Globe,
+  Lock,
+  Radio,
   RotateCcw,
+  Search,
   Settings,
   Sliders,
+  ThumbsUp,
   Volume2,
   VolumeX,
   Wrench,
@@ -36,6 +43,8 @@ import {
   getCarEffectiveTorque,
   getCarEffectiveWeight,
   getCarEffectiveZeroToHundred,
+  getRankFromXp,
+  getTodayDateKey,
   getUpgradeCost,
   getUpgradeStageLabel,
   HudSnapshot,
@@ -103,6 +112,11 @@ interface ShowroomHUDProps {
   onPreviewDealershipCar: (carId: string | null) => void;
   onRevDealershipCar: (carId: string) => void;
   onTouchWalk: (key: 'throttle' | 'brake' | 'left' | 'right', active: boolean) => void;
+  onOpenProgression: () => void;
+  onOpenOnlineSettings: () => void;
+  onStartContract: () => void;
+  onLikeNearbyPlayer: () => void;
+  onCycleRadio: () => void;
 }
 
 const UPGRADE_PART_META_TOP: Array<{
@@ -217,19 +231,35 @@ export const ShowroomHUD: React.FC<ShowroomHUDProps> = ({
   onPreviewDealershipCar,
   onRevDealershipCar,
   onTouchWalk,
+  onOpenProgression,
+  onOpenOnlineSettings,
+  onStartContract,
+  onLikeNearbyPlayer,
+  onCycleRadio,
 }) => {
   const [tuningTab, setTuningTab] = useState<'perf' | 'cosmetic' | 'paint'>('perf');
   const [garageOpen, setGarageOpen] = useState(false);
   const [previewCarId, setPreviewCarId] = useState<string | null>(null);
+  const [dealerSelectedId, setDealerSelectedId] = useState<string>(profile.activeCarId);
+  const [dealerSearch, setDealerSearch] = useState('');
+  const [dealerFilter, setDealerFilter] = useState<'ALL' | 'RWD' | 'AWD' | 'OWNED'>('ALL');
   const [isTouchDevice, setIsTouchDevice] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
-    const mq = window.matchMedia('(pointer: coarse)');
-    setIsTouchDevice(mq.matches);
-    const onChange = (ev: MediaQueryListEvent) => setIsTouchDevice(ev.matches);
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
+    const coarseMq = window.matchMedia('(pointer: coarse)');
+    const fineHoverMq = window.matchMedia('(any-pointer: fine) and (hover: hover)');
+    const checkTouchOnly = () =>
+      setIsTouchDevice(
+        coarseMq.matches && navigator.maxTouchPoints > 0 && !fineHoverMq.matches
+      );
+    checkTouchOnly();
+    coarseMq.addEventListener('change', checkTouchOnly);
+    fineHoverMq.addEventListener('change', checkTouchOnly);
+    return () => {
+      coarseMq.removeEventListener('change', checkTouchOnly);
+      fineHoverMq.removeEventListener('change', checkTouchOnly);
+    };
   }, []);
 
   // Close garage drawer if workshop or dealership opens
@@ -237,7 +267,10 @@ export const ShowroomHUD: React.FC<ShowroomHUDProps> = ({
     if (tuningOpen || dealershipOpen) {
       setGarageOpen(false);
     }
-  }, [tuningOpen, dealershipOpen]);
+    if (dealershipOpen) {
+      setDealerSelectedId(hud.nearbyDealershipCarId ?? profile.activeCarId);
+    }
+  }, [tuningOpen, dealershipOpen, hud.nearbyDealershipCarId, profile.activeCarId]);
 
   // Reset 3D dealership preview when dealership closes
   useEffect(() => {
@@ -269,6 +302,9 @@ export const ShowroomHUD: React.FC<ShowroomHUDProps> = ({
 
   const enterExitKeyLabel = formatPrimaryKeyLabel(keybindings.enterExitCar);
   const pointerLockKeyLabel = formatPrimaryKeyLabel(keybindings.togglePointerLock);
+  const radioKeyLabel = formatPrimaryKeyLabel(keybindings.toggleRadio);
+  const pilotRank = getRankFromXp(profile.xp);
+  const canClaimDaily = profile.lastDailyClaimDate !== getTodayDateKey();
 
   const nearbyDealershipSpec = hud.nearbyDealershipCarId
     ? CAR_CATALOG[hud.nearbyDealershipCarId]
@@ -328,6 +364,8 @@ export const ShowroomHUD: React.FC<ShowroomHUDProps> = ({
       onOpenTuning(true);
     } else if (hud.nearbyZone === 'DEALERSHIP') {
       onOpenDealership(true);
+    } else if (hud.nearbyZone === 'CONTRACT') {
+      onStartContract();
     }
   };
 
@@ -353,12 +391,64 @@ export const ShowroomHUD: React.FC<ShowroomHUDProps> = ({
           </div>
         )}
 
-        <div className="pointer-events-auto flex items-center gap-2 border border-white/[0.1] bg-[#090b10]/90 px-3 py-1.5 shadow-xl">
+        <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 border border-white/[0.1] bg-[#090b10]/90 px-3 py-1.5 shadow-xl">
           <div className="font-telemetry text-sm md:text-base font-semibold text-white pr-1">
             ${profile.cash.toLocaleString()}
           </div>
 
           <div className="h-4 w-px bg-white/[0.1]" />
+
+          {/* Pilot Rank & Daily Progression */}
+          <button
+            type="button"
+            onClick={onOpenProgression}
+            title="Rango de Piloto, Recompensas Diarias y Desafíos"
+            aria-label="Abrir Progreso y Recompensas"
+            className="relative flex h-7 items-center gap-1.5 border border-amber-400/30 bg-amber-500/10 px-2 text-amber-300 hover:border-amber-300 hover:text-white transition-colors cursor-pointer"
+          >
+            <Award className="h-3.5 w-3.5" />
+            <span className="font-telemetry text-[10px] font-bold uppercase tracking-wider">
+              Nv.{pilotRank}
+            </span>
+            {canClaimDaily && (
+              <span className="h-2 w-2 rounded-full bg-emerald-400" aria-label="Recompensa disponible" />
+            )}
+          </button>
+
+          {/* Online Cross-Play Room Status */}
+          <button
+            type="button"
+            onClick={onOpenOnlineSettings}
+            title={`Sala Online: ${hud.onlineRoomCode} (${hud.onlinePlayersCount} pilotos)`}
+            aria-label="Configurar Sala Online Cross-Play"
+            className="flex h-7 items-center gap-1.5 border border-white/[0.08] bg-white/[0.03] px-2 text-slate-200 hover:border-sky-400/50 hover:text-white transition-colors cursor-pointer"
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                hud.onlineConnected ? 'bg-emerald-400' : 'bg-amber-400'
+              }`}
+            />
+            <Globe className="h-3.5 w-3.5 text-sky-400" />
+            <span className="font-telemetry text-[10px] font-semibold uppercase">
+              {hud.onlinePlayersCount}
+            </span>
+          </button>
+
+          {/* Radio Station Quick Toggle */}
+          <button
+            type="button"
+            onClick={onCycleRadio}
+            title={`Radio Phonk / Synthwave [${radioKeyLabel}]`}
+            aria-label="Cambiar emisora de radio"
+            className={`flex h-7 items-center gap-1 border px-2 text-[10px] font-telemetry font-bold uppercase transition-colors cursor-pointer ${
+              hud.radioStation !== 'OFF'
+                ? 'border-fuchsia-400/50 bg-fuchsia-500/15 text-fuchsia-200'
+                : 'border-white/[0.08] bg-white/[0.03] text-slate-400 hover:text-white'
+            }`}
+          >
+            <Radio className="h-3 w-3" />
+            <span className="hidden md:inline">{hud.radioStation}</span>
+          </button>
 
           {/* Mis Carros 2D Vector Icon Button */}
           <button
@@ -711,9 +801,13 @@ export const ShowroomHUD: React.FC<ShowroomHUDProps> = ({
                   <div className="divide-y divide-white/[0.08] border border-white/[0.08] bg-black/40">
                     {UPGRADE_PART_META_TOP.map((item) => {
                       const lvl = activeState.upgrades[item.key] ?? 0;
-                      const isMax = lvl >= 3;
-                      const cost = isMax ? 0 : getUpgradeCost(activeSpec, item.key, lvl);
+                      const isTurbo = item.key === 'turbo';
+                      const maxAllowed = isTurbo ? (pilotRank >= 10 ? 4 : 3) : 3;
+                      const lockedRank10 = isTurbo && lvl === 3 && pilotRank < 10;
+                      const isMax = lvl >= maxAllowed;
+                      const cost = isMax || lockedRank10 ? 0 : getUpgradeCost(activeSpec, item.key, lvl);
                       const nextLabel = isMax ? 'MÁX' : getUpgradeStageLabel(lvl + 1);
+                      const stages = isTurbo ? [1, 2, 3, 4] : [1, 2, 3];
 
                       return (
                         <div key={item.key} className="px-3 py-2.5">
@@ -733,19 +827,29 @@ export const ShowroomHUD: React.FC<ShowroomHUDProps> = ({
                                   {getUpgradeStageLabel(lvl)}
                                 </span>
                               </div>
-                              <div className="mt-0.5 text-[10px] text-slate-400">{item.desc}</div>
+                              <div className="mt-0.5 text-[10px] text-slate-400">
+                                {isTurbo && pilotRank >= 10
+                                  ? `${item.desc} · Stage 4 Titanio desbloqueado`
+                                  : item.desc}
+                              </div>
                             </div>
                             <button
                               type="button"
-                              disabled={isMax}
+                              disabled={isMax || lockedRank10}
                               onClick={() => onUpgradeCar(item.key)}
-                              className={`shrink-0 px-2.5 py-1.5 text-[10px] font-semibold font-telemetry uppercase whitespace-nowrap cursor-pointer ${
-                                isMax
-                                  ? 'border border-white/10 text-slate-500 cursor-default'
-                                  : 'bg-[#e10600] text-white hover:bg-[#ff1812]'
+                              className={`shrink-0 px-2.5 py-1.5 text-[10px] font-semibold font-telemetry uppercase whitespace-nowrap ${
+                                lockedRank10
+                                  ? 'border border-amber-400/30 bg-amber-500/10 text-amber-300 cursor-not-allowed'
+                                  : isMax
+                                    ? 'border border-white/10 text-slate-500 cursor-default'
+                                    : 'bg-[#e10600] text-white hover:bg-[#ff1812] cursor-pointer'
                               }`}
                             >
-                              {isMax ? 'MÁX' : `${nextLabel} · $${cost.toLocaleString()}`}
+                              {lockedRank10
+                                ? 'Bloq. Nv.10'
+                                : isMax
+                                  ? 'MÁX'
+                                  : `${nextLabel} · $${cost.toLocaleString()}`}
                             </button>
                           </div>
 
@@ -773,11 +877,23 @@ export const ShowroomHUD: React.FC<ShowroomHUDProps> = ({
                             </div>
                           )}
 
-                          <div className="mt-2 grid grid-cols-3 gap-1">
-                            {[1, 2, 3].map((stage) => (
+                          <div
+                            className={`mt-2 grid gap-1 ${
+                              isTurbo ? 'grid-cols-4' : 'grid-cols-3'
+                            }`}
+                          >
+                            {stages.map((stage) => (
                               <div
                                 key={stage}
-                                className={`h-1 ${lvl >= stage ? 'bg-[#2563eb]' : 'bg-white/[0.08]'}`}
+                                className={`h-1 ${
+                                  lvl >= stage
+                                    ? stage === 4
+                                      ? 'bg-amber-400'
+                                      : 'bg-[#2563eb]'
+                                    : stage === 4 && pilotRank < 10
+                                      ? 'bg-amber-500/20'
+                                      : 'bg-white/[0.08]'
+                                }`}
                               />
                             ))}
                           </div>
@@ -1136,31 +1252,46 @@ export const ShowroomHUD: React.FC<ShowroomHUDProps> = ({
                           Neón Inferior (Underglow)
                         </span>
                         <span className="text-[10px] text-slate-300">
-                          {UNDERGLOW_PALETTE.find((u) => u.hex === activeState.underglow)?.label ??
+                          {UNDERGLOW_PALETTE.find((u) => u.id === activeState.underglow)?.label ??
                             'Activo'}
                         </span>
                       </div>
-                      <div className="grid grid-cols-7 gap-1.5">
-                        {UNDERGLOW_PALETTE.map((u) => (
-                          <button
-                            key={u.id}
-                            type="button"
-                            title={u.label}
-                            onClick={() => onUpdateAppearance({ underglow: u.hex })}
-                            className={`h-7 border transition-transform cursor-pointer ${
-                              activeState.underglow === u.hex
-                                ? 'border-white scale-110'
-                                : 'border-white/20 hover:scale-105'
-                            }`}
-                            style={{
-                              backgroundColor: u.hex === 'none' ? '#12151c' : u.hex,
-                            }}
-                          >
-                            {u.hex === 'none' && (
-                              <span className="text-[9px] text-slate-400">OFF</span>
-                            )}
-                          </button>
-                        ))}
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {UNDERGLOW_PALETTE.map((u) => {
+                          const locked = Boolean(u.unlockRank && pilotRank < u.unlockRank);
+                          const selected = activeState.underglow === u.id;
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              title={u.label}
+                              onClick={() => onUpdateAppearance({ underglow: u.id })}
+                              className={`relative flex h-7 items-center justify-center border transition-transform cursor-pointer ${
+                                selected
+                                  ? 'border-white scale-105'
+                                  : 'border-white/20 hover:scale-105'
+                              } ${locked ? 'opacity-55' : ''}`}
+                              style={{
+                                backgroundColor: u.hex === 'none' ? '#12151c' : u.hex,
+                              }}
+                            >
+                              {u.hex === 'none' && (
+                                <span className="text-[9px] text-slate-400">OFF</span>
+                              )}
+                              {locked && (
+                                <span className="flex items-center gap-0.5 bg-black/75 px-1 py-0.5 text-[8px] font-bold text-amber-300">
+                                  <Lock className="h-2.5 w-2.5" />
+                                  {u.unlockRank}
+                                </span>
+                              )}
+                              {!locked && u.id === 'pulse_neon' && (
+                                <span className="bg-black/65 px-1 text-[8px] font-bold text-cyan-200 uppercase">
+                                  Pulso
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
@@ -1225,20 +1356,27 @@ export const ShowroomHUD: React.FC<ShowroomHUDProps> = ({
                       Acabado de Carrocería
                     </span>
                     <div className="grid grid-cols-2 gap-1.5">
-                      {PAINT_FINISH_OPTIONS.map((fin) => (
-                        <button
-                          key={fin.id}
-                          type="button"
-                          onClick={() => onUpdateAppearance({ paintFinish: fin.id })}
-                          className={`border py-2 px-2 text-[10.5px] font-semibold uppercase tracking-wider cursor-pointer ${
-                            (activeState.paintFinish ?? 'gloss') === fin.id
-                              ? 'border-[#2563eb] bg-[#2563eb]/20 text-white'
-                              : 'border-white/[0.08] bg-white/[0.02] text-slate-400 hover:text-white'
-                          }`}
-                        >
-                          {fin.label}
-                        </button>
-                      ))}
+                      {PAINT_FINISH_OPTIONS.map((fin) => {
+                        const locked = Boolean(fin.unlockRank && pilotRank < fin.unlockRank);
+                        const selected = (activeState.paintFinish ?? 'gloss') === fin.id;
+                        return (
+                          <button
+                            key={fin.id}
+                            type="button"
+                            onClick={() => onUpdateAppearance({ paintFinish: fin.id })}
+                            className={`flex items-center justify-center gap-1 border py-2 px-2 text-[10.5px] font-semibold uppercase tracking-wider cursor-pointer ${
+                              selected
+                                ? 'border-[#2563eb] bg-[#2563eb]/20 text-white'
+                                : locked
+                                  ? 'border-amber-400/25 bg-amber-500/[0.06] text-amber-200/75'
+                                  : 'border-white/[0.08] bg-white/[0.02] text-slate-400 hover:text-white'
+                            } ${fin.id === 'chameleon' ? 'col-span-2' : ''}`}
+                          >
+                            {locked && <Lock className="h-3 w-3 shrink-0" />}
+                            <span>{fin.label}</span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -1400,11 +1538,51 @@ export const ShowroomHUD: React.FC<ShowroomHUDProps> = ({
               </svg>
             </div>
           </section>
+        ) : !tuningOpen && !dealershipOpen && (hud.inCarMeetZone || hud.nearbyRemotePlayer) ? (
+          <div className="pointer-events-auto flex flex-col gap-1.5 border border-fuchsia-400/35 bg-[#090b10]/94 p-3 shadow-xl max-w-[270px]">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[9.5px] font-bold uppercase tracking-[0.18em] text-fuchsia-300">
+                Zona Car Meet Nocturno
+              </span>
+              {hud.inCarMeetZone && (
+                <span className="border border-emerald-400/40 bg-emerald-500/15 px-1.5 py-0.5 text-[8.5px] font-bold uppercase text-emerald-300">
+                  En Zona
+                </span>
+              )}
+            </div>
+            {hud.nearbyRemotePlayer ? (
+              <>
+                <div className="text-xs font-semibold text-white truncate">
+                  {hud.nearbyRemotePlayer.name} ·{' '}
+                  <span className="text-slate-400">
+                    {CAR_CATALOG[hud.nearbyRemotePlayer.carId]?.name ?? hud.nearbyRemotePlayer.carId}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-telemetry text-[10px] text-amber-300">
+                    ♥ {hud.nearbyRemotePlayer.likes} votos
+                  </span>
+                  <button
+                    type="button"
+                    onClick={onLikeNearbyPlayer}
+                    className="flex items-center gap-1.5 bg-fuchsia-600 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white hover:bg-fuchsia-500 cursor-pointer"
+                  >
+                    <ThumbsUp className="h-3 w-3" />
+                    Me gusta el coche
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="text-[10.5px] text-slate-400">
+                Estaciona junto a otro piloto para escuchar su escape y votar su build (+Rep).
+              </div>
+            )}
+          </div>
         ) : (
           <div />
         )}
 
-        {/* Contextual Minimal Floating Prompt: Near Car/Building while walking */}
+        {/* Contextual Minimal Floating Prompt: Near Car/Building/Contrato Express while walking */}
         {!tuningOpen && !dealershipOpen && hud.mode === 'WALKING' && hud.nearbyZone && (
           <button
             type="button"
@@ -1413,6 +1591,8 @@ export const ShowroomHUD: React.FC<ShowroomHUDProps> = ({
           >
             {hud.nearbyZone === 'CAR' ? (
               <Car className="h-3.5 w-3.5 text-[#e10600]" />
+            ) : hud.nearbyZone === 'CONTRACT' ? (
+              <Flag className="h-3.5 w-3.5 text-amber-400" />
             ) : (
               <Wrench className="h-3.5 w-3.5 text-[#e10600]" />
             )}
@@ -1424,6 +1604,11 @@ export const ShowroomHUD: React.FC<ShowroomHUDProps> = ({
               ) : hud.nearbyZone === 'TUNING' ? (
                 <>
                   Pulsa <span className="font-telemetry font-bold text-[#e10600]">[E]</span> para entrar al Taller
+                </>
+              ) : hud.nearbyZone === 'CONTRACT' ? (
+                <>
+                  Pulsa <span className="font-telemetry font-bold text-amber-400">[E]</span> para CONTRATO EXPRESS ·{' '}
+                  <span className="font-telemetry text-emerald-400">+$18,000</span>
                 </>
               ) : nearbyDealershipSpec ? (
                 <>
@@ -1600,137 +1785,350 @@ export const ShowroomHUD: React.FC<ShowroomHUDProps> = ({
         </div>
       )}
 
-      {/* ==================== DEALERSHIP MODAL (9 CARS WITH PREVIEW & ENGINE REV) ==================== */}
-      {dealershipOpen && !previewCarId && (
-        <div className="pointer-events-auto fixed inset-0 z-40 flex items-center justify-center bg-black/80 p-4">
-          <div className="w-full max-w-5xl border border-white/[0.1] bg-[#090b10] p-5 shadow-2xl max-h-[88vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-white/[0.08] pb-3 mb-4">
-              <div>
-                <div className="text-[10px] uppercase tracking-[0.2em] text-[#e10600] font-semibold">
-                  Salón Interior · 9 Vehículos en Exhibición
-                </div>
-                <h2 className="font-display text-2xl font-medium tracking-wide text-white">
-                  Concesionario
-                </h2>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="text-right">
-                  <div className="text-[9px] uppercase tracking-[0.16em] text-slate-400">Créditos</div>
-                  <div className="font-telemetry text-sm font-semibold text-white">
-                    ${profile.cash.toLocaleString()}
+      {/* ==================== 2-COLUMN DEALERSHIP CATALOG MODAL ==================== */}
+      {dealershipOpen && !previewCarId && (() => {
+        const allCatalog = Object.values(CAR_CATALOG);
+        const q = dealerSearch.trim().toLowerCase();
+        const filteredCars = allCatalog.filter((c) => {
+          const matchesSearch =
+            !q ||
+            c.name.toLowerCase().includes(q) ||
+            c.brand.toLowerCase().includes(q) ||
+            c.referenceModel.toLowerCase().includes(q);
+          if (!matchesSearch) return false;
+          if (dealerFilter === 'RWD') return c.drivetrain === 'RWD';
+          if (dealerFilter === 'AWD') return c.drivetrain === 'AWD';
+          if (dealerFilter === 'OWNED') return profile.ownedCars.includes(c.id);
+          return true;
+        });
+
+        const selectedSpec =
+          CAR_CATALOG[dealerSelectedId] ?? filteredCars[0] ?? CAR_CATALOG.kuruma_2008;
+        const selectedState =
+          profile.cars[selectedSpec.id] ?? createDefaultCarState(selectedSpec);
+        const selOwned = profile.ownedCars.includes(selectedSpec.id);
+        const selEquipped = profile.activeCarId === selectedSpec.id;
+        const selHp = getCarEffectiveHp(selectedSpec, selectedState);
+        const sel0100 = getCarEffectiveZeroToHundred(selectedSpec, selectedState);
+        const selTopKmh = getCarEffectiveTopSpeed(selectedSpec, selectedState);
+        const selTopDisplay = formatSpeed(selTopKmh, speedUnits);
+        const selWeight = getCarEffectiveWeight(selectedSpec, selectedState);
+
+        // Progress bar percentages normalized across catalog range
+        const powerPct = Math.min(100, Math.max(12, Math.round((selHp / 1100) * 100)));
+        const accelPct = Math.min(
+          100,
+          Math.max(15, Math.round(((9.5 - Math.min(8.8, sel0100)) / 7.2) * 100))
+        );
+        const speedPct = Math.min(100, Math.max(18, Math.round((selTopKmh / 410) * 100)));
+        const weightPct = Math.min(
+          100,
+          Math.max(16, Math.round(((2100 - Math.min(2000, selWeight)) / 1050) * 100))
+        );
+
+        return (
+          <div className="pointer-events-auto fixed inset-0 z-40 flex items-center justify-center bg-black/82 p-3 sm:p-5">
+            <div className="flex w-full max-w-6xl flex-col border border-white/[0.12] bg-[#080b10] shadow-2xl max-h-[90vh]">
+              {/* Top Bar */}
+              <div className="flex items-center justify-between border-b border-white/[0.08] px-5 py-3.5">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-emerald-400">
+                    Sala VIP · Catálogo Oficial
                   </div>
+                  <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-white">
+                    Concesionario
+                  </h2>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onOpenDealership(false)}
-                  className="flex h-8 w-8 items-center justify-center border border-white/[0.08] bg-white/[0.03] text-slate-300 hover:text-white cursor-pointer"
-                  aria-label="Cerrar Concesionario"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {Object.values(CAR_CATALOG).map((spec) => {
-                const owned = profile.ownedCars.includes(spec.id);
-                const equipped = profile.activeCarId === spec.id;
-                const isNearbyPedestal = hud.nearbyDealershipCarId === spec.id;
-                const state = profile.cars[spec.id] ?? createDefaultCarState(spec);
-                const carHp = getCarEffectiveHp(spec, state);
-                const carTq = getCarEffectiveTorque(spec, state);
-                const carTop = formatSpeed(getCarEffectiveTopSpeed(spec, state), speedUnits);
-                const carWeight = getCarEffectiveWeight(spec, state);
-                const car0100 = getCarEffectiveZeroToHundred(spec, state);
-
-                return (
-                  <div
-                    key={spec.id}
-                    className={`border p-3.5 transition-colors flex flex-col justify-between ${
-                      isNearbyPedestal
-                        ? 'border-amber-400/80 bg-amber-500/[0.07]'
-                        : equipped
-                          ? 'border-[#e10600] bg-[#e10600]/[0.07]'
-                          : 'border-white/[0.08] bg-white/[0.02] hover:border-white/20'
-                    }`}
+                <div className="flex items-center gap-4">
+                  <div className="text-right">
+                    <div className="text-[9px] uppercase tracking-[0.18em] text-slate-400">
+                      Créditos
+                    </div>
+                    <div className="font-telemetry text-base font-bold tabular-nums text-white">
+                      ${profile.cash.toLocaleString()}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onOpenDealership(false)}
+                    className="flex h-8 w-8 items-center justify-center border border-white/[0.12] bg-white/[0.04] text-slate-300 hover:border-white/35 hover:text-white cursor-pointer"
+                    aria-label="Cerrar Concesionario"
                   >
-                    <div>
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="text-[9px] uppercase tracking-[0.16em] text-slate-400 truncate">
-                            {spec.referenceModel}
-                            {isNearbyPedestal ? ' · Frente a ti' : ''}
-                          </div>
-                          <h3 className="font-display text-lg font-medium tracking-wide text-white truncate">
-                            {spec.name}
-                          </h3>
-                        </div>
-                        <span className="border border-white/15 px-1.5 py-0.5 font-telemetry text-[10px] font-semibold text-slate-300 shrink-0">
-                          {spec.drivetrain}
-                        </span>
-                      </div>
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
 
-                      <div className="mt-2.5 grid grid-cols-3 gap-x-2 gap-y-1 text-[11px] text-slate-300 font-telemetry border-t border-white/[0.06] pt-2">
-                        <span>{carHp} HP</span>
-                        <span>{carTq} Nm</span>
-                        <span>
-                          {carTop} {speedUnitLabel}
-                        </span>
-                        <span>{carWeight.toLocaleString()} kg</span>
-                        <span>0-100: {car0100.toFixed(1)}s</span>
-                        <span>{spec.brand.split(' ')[0]}</span>
-                      </div>
+              {/* 2-Column Body */}
+              <div className="grid flex-1 grid-cols-1 lg:grid-cols-12 overflow-hidden">
+                {/* LEFT COLUMN: Selected Car Details, 4 Stat Bars, Green VER + COMPRAR */}
+                <aside className="lg:col-span-4 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-white/[0.08] bg-[#06080d] p-5 overflow-y-auto">
+                  <div>
+                    <div className="flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      <span>{selectedSpec.brand}</span>
+                      <span className="font-telemetry text-slate-300">
+                        {selectedSpec.drivetrain}
+                      </span>
+                    </div>
+                    <h3 className="font-display mt-1 text-2xl font-bold uppercase tracking-wide text-white">
+                      {selectedSpec.name}
+                    </h3>
+                    <div className="mt-0.5 text-xs text-slate-400">
+                      {selectedSpec.referenceModel}
                     </div>
 
-                    <div className="mt-3 space-y-2 border-t border-white/[0.06] pt-2.5">
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleStartPreview(spec.id)}
-                          className="flex flex-1 items-center justify-center gap-1 border border-white/15 bg-white/[0.04] py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-200 hover:border-white/35 hover:text-white cursor-pointer"
-                        >
-                          <Eye className="h-3 w-3 text-[#e10600]" />
-                          Vista Previa
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onRevDealershipCar(spec.id)}
-                          title="Escuchar sonido del motor"
-                          aria-label={`Escuchar motor de ${spec.name}`}
-                          className="flex items-center justify-center gap-1 border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-200 hover:border-white/35 hover:text-white cursor-pointer"
-                        >
-                          <Volume2 className="h-3.5 w-3.5 text-amber-400" />
-                        </button>
+                    <div className="mt-3 flex items-baseline justify-between border-y border-white/[0.07] py-2.5">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                        Precio
+                      </span>
+                      <span className="font-telemetry text-xl font-bold tabular-nums text-emerald-400">
+                        {selOwned
+                          ? 'EN PROPIEDAD'
+                          : selectedSpec.price === 0
+                            ? 'GRATIS'
+                            : `$${selectedSpec.price.toLocaleString()}`}
+                      </span>
+                    </div>
+
+                    {/* 4 Stat Bars: Poder, Aceleración, Velocidad Máxima, Peso */}
+                    <div className="mt-4 space-y-3.5">
+                      <div>
+                        <div className="flex justify-between text-[11px] mb-1">
+                          <span className="font-semibold uppercase tracking-wider text-slate-300">
+                            Poder
+                          </span>
+                          <span className="font-telemetry font-bold tabular-nums text-white">
+                            {selHp} HP
+                          </span>
+                        </div>
+                        <div className="h-2 w-full bg-white/[0.07]">
+                          <div
+                            className="h-full bg-emerald-500 transition-all duration-300"
+                            style={{ width: `${powerPct}%` }}
+                          />
+                        </div>
                       </div>
 
-                      <div className="flex items-center justify-between">
-                        <span className="font-telemetry text-xs font-semibold text-slate-200">
-                          {owned
-                            ? 'En propiedad'
-                            : spec.price === 0
-                              ? 'GRATIS'
-                              : `$${spec.price.toLocaleString()}`}
-                        </span>
+                      <div>
+                        <div className="flex justify-between text-[11px] mb-1">
+                          <span className="font-semibold uppercase tracking-wider text-slate-300">
+                            Aceleración (0-100)
+                          </span>
+                          <span className="font-telemetry font-bold tabular-nums text-white">
+                            {sel0100.toFixed(1)} s
+                          </span>
+                        </div>
+                        <div className="h-2 w-full bg-white/[0.07]">
+                          <div
+                            className="h-full bg-cyan-400 transition-all duration-300"
+                            style={{ width: `${accelPct}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between text-[11px] mb-1">
+                          <span className="font-semibold uppercase tracking-wider text-slate-300">
+                            Velocidad Máxima
+                          </span>
+                          <span className="font-telemetry font-bold tabular-nums text-white">
+                            {selTopDisplay} {speedUnitLabel}
+                          </span>
+                        </div>
+                        <div className="h-2 w-full bg-white/[0.07]">
+                          <div
+                            className="h-full bg-amber-400 transition-all duration-300"
+                            style={{ width: `${speedPct}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between text-[11px] mb-1">
+                          <span className="font-semibold uppercase tracking-wider text-slate-300">
+                            Peso
+                          </span>
+                          <span className="font-telemetry font-bold tabular-nums text-white">
+                            {selWeight.toLocaleString()} kg
+                          </span>
+                        </div>
+                        <div className="h-2 w-full bg-white/[0.07]">
+                          <div
+                            className="h-full bg-slate-300 transition-all duration-300"
+                            style={{ width: `${weightPct}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Left Column Action Buttons: Green VER + Sound + COMPRAR/SELECCIONAR */}
+                  <div className="mt-5 space-y-2 pt-3 border-t border-white/[0.08]">
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleStartPreview(selectedSpec.id)}
+                        className="flex items-center justify-center gap-1.5 bg-emerald-600 py-2.5 text-xs font-bold uppercase tracking-[0.16em] text-white hover:bg-emerald-500 transition-colors cursor-pointer"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        VER
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => onRevDealershipCar(selectedSpec.id)}
+                        className="flex items-center justify-center gap-1.5 border border-white/15 bg-white/[0.04] py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-slate-200 hover:border-white/35 hover:text-white cursor-pointer"
+                      >
+                        <Volume2 className="h-3.5 w-3.5 text-amber-400" />
+                        MOTOR
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => onBuyOrSelectCar(selectedSpec.id)}
+                      className={`w-full py-3 text-xs font-bold uppercase tracking-[0.18em] transition-colors cursor-pointer ${
+                        selEquipped
+                          ? 'border border-emerald-400/60 bg-emerald-500/15 text-emerald-300'
+                          : 'bg-[#e10600] text-white hover:bg-[#ff1812]'
+                      }`}
+                    >
+                      {selEquipped
+                        ? 'VEHÍCULO EQUIPADO'
+                        : selOwned
+                          ? 'SELECCIONAR VEHÍCULO'
+                          : selectedSpec.price === 0
+                            ? 'RECLAMAR GRATIS'
+                            : `COMPRAR · $${selectedSpec.price.toLocaleString()}`}
+                    </button>
+                  </div>
+                </aside>
+
+                {/* RIGHT COLUMN: Search Bar, Interactive Filter Buttons, and Vehicle Card Grid */}
+                <section className="lg:col-span-8 flex flex-col overflow-hidden p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2.5 pb-3.5 border-b border-white/[0.08]">
+                    <div className="relative flex-1 min-w-[200px]">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        value={dealerSearch}
+                        onChange={(e) => setDealerSearch(e.target.value)}
+                        placeholder="Buscar modelo o marca..."
+                        className="w-full border border-white/[0.12] bg-[#0b0f17] py-2 pl-8 pr-3 text-xs text-white placeholder:text-slate-500 focus:border-emerald-400 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(
+                        [
+                          { id: 'ALL', label: 'Todos (9)' },
+                          { id: 'RWD', label: 'RWD' },
+                          { id: 'AWD', label: 'AWD' },
+                          { id: 'OWNED', label: 'En Propiedad' },
+                        ] as const
+                      ).map((f) => (
                         <button
+                          key={f.id}
                           type="button"
-                          onClick={() => onBuyOrSelectCar(spec.id)}
-                          className={`px-3.5 py-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] whitespace-nowrap cursor-pointer ${
-                            equipped
-                              ? 'border border-white/20 text-white'
-                              : 'bg-[#e10600] text-white hover:bg-[#ff1812]'
+                          onClick={() => setDealerFilter(f.id)}
+                          className={`border px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] transition-colors cursor-pointer ${
+                            dealerFilter === f.id
+                              ? 'border-emerald-400 bg-emerald-500/20 text-white'
+                              : 'border-white/12 bg-white/[0.03] text-slate-300 hover:border-white/30 hover:text-white'
                           }`}
                         >
-                          {equipped ? 'Equipado' : owned ? 'Seleccionar' : 'Comprar'}
+                          {f.label}
                         </button>
-                      </div>
+                      ))}
                     </div>
                   </div>
-                );
-              })}
+
+                  <div className="mt-3.5 flex-1 overflow-y-auto pr-1">
+                    {filteredCars.length === 0 ? (
+                      <div className="flex h-40 items-center justify-center border border-white/[0.08] bg-white/[0.02] text-xs uppercase tracking-widest text-slate-400">
+                        Sin vehículos que coincidan con el filtro
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
+                        {filteredCars.map((spec) => {
+                          const owned = profile.ownedCars.includes(spec.id);
+                          const equipped = profile.activeCarId === spec.id;
+                          const isSelected = selectedSpec.id === spec.id;
+                          const state =
+                            profile.cars[spec.id] ?? createDefaultCarState(spec);
+                          const carHp = getCarEffectiveHp(spec, state);
+                          const carTop = formatSpeed(
+                            getCarEffectiveTopSpeed(spec, state),
+                            speedUnits
+                          );
+
+                          return (
+                            <button
+                              key={spec.id}
+                              type="button"
+                              onClick={() => setDealerSelectedId(spec.id)}
+                              className={`flex flex-col justify-between border p-3 text-left transition-colors cursor-pointer ${
+                                isSelected
+                                  ? 'border-emerald-400 bg-emerald-500/[0.12]'
+                                  : equipped
+                                    ? 'border-[#e10600]/75 bg-[#e10600]/[0.06]'
+                                    : 'border-white/[0.08] bg-white/[0.02] hover:border-white/25 hover:bg-white/[0.04]'
+                              }`}
+                            >
+                              <div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-400 truncate">
+                                    {spec.brand}
+                                  </span>
+                                  <span
+                                    className="h-2.5 w-2.5 shrink-0 border border-white/30"
+                                    style={{
+                                      backgroundColor: state.paint ?? spec.defaultPaint,
+                                    }}
+                                  />
+                                </div>
+                                <div className="font-display mt-0.5 text-base font-bold uppercase tracking-wide text-white truncate">
+                                  {spec.name}
+                                </div>
+                                <div className="text-[10px] text-slate-400 truncate">
+                                  {spec.referenceModel}
+                                </div>
+                              </div>
+
+                              <div className="mt-2.5 flex items-center justify-between border-t border-white/[0.07] pt-2 font-telemetry text-[11px] tabular-nums">
+                                <span className="text-slate-300">
+                                  {carHp} HP · {carTop} {speedUnitLabel}
+                                </span>
+                                <span
+                                  className={`font-bold ${
+                                    equipped
+                                      ? 'text-cyan-300'
+                                      : owned
+                                        ? 'text-emerald-400'
+                                        : 'text-white'
+                                  }`}
+                                >
+                                  {equipped
+                                    ? 'EQUIPADO'
+                                    : owned
+                                      ? 'TUYO'
+                                      : spec.price === 0
+                                        ? 'GRATIS'
+                                        : `$${spec.price.toLocaleString()}`}
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </section>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

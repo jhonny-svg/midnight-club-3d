@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { HighwayHUD } from './components/HighwayHUD';
-import { SettingsModal } from './components/SettingsModal';
+import { ProgressionModal } from './components/ProgressionModal';
+import { SettingsModal, SettingsTab } from './components/SettingsModal';
 import { ShowroomHUD } from './components/ShowroomHUD';
 import { StartMenuOverlay } from './components/StartMenuOverlay';
-import { MidnightEngine } from './game/MidnightEngine';
+import { MidnightEngine, ProgressionEvent } from './game/MidnightEngine';
 import {
   CAR_CATALOG,
   CarState,
@@ -12,11 +13,16 @@ import {
   CDI_RACING_COST,
   CDI_STEP_RPM,
   cloneDefaultKeybindings,
+  createDailyChallengesForDate,
   createDefaultCarState,
+  DAILY_REWARDS_SCHEDULE,
+  DailyChallengeItem,
   DEFAULT_SETTINGS,
   DiffuserOption,
   FrontBumperOption,
   GameSettings,
+  getRankFromXp,
+  getTodayDateKey,
   getUpgradeCost,
   getUpgradeStageLabel,
   HudSnapshot,
@@ -39,9 +45,9 @@ import {
 const STORAGE_KEY = 'midnight_club_no_hesi_v5';
 const SETTINGS_STORAGE_KEY = 'midnight_club_no_hesi_settings_v1';
 
-function clampStage(v: unknown): number {
+function clampStage(v: unknown, max = 3): number {
   const n = typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : 0;
-  return Math.min(3, Math.max(0, n));
+  return Math.min(max, Math.max(0, n));
 }
 
 function sanitizeSpoiler(v: unknown): SpoilerOption {
@@ -52,7 +58,9 @@ function sanitizeSpoiler(v: unknown): SpoilerOption {
 }
 
 function sanitizePaintFinish(v: unknown): PaintFinish {
-  if (v === 'gloss' || v === 'matte' || v === 'metallic' || v === 'chrome') return v;
+  if (v === 'gloss' || v === 'matte' || v === 'metallic' || v === 'chrome' || v === 'chameleon') {
+    return v;
+  }
   return 'gloss';
 }
 
@@ -135,7 +143,7 @@ function loadSavedProfile(): SaveProfile {
             revLimitRpm: Math.min(CDI_MAX_RPM, Math.max(CDI_MIN_RPM, rawRpm)),
             upgrades: {
               ecu: clampStage(saved.upgrades?.ecu),
-              turbo: clampStage(saved.upgrades?.turbo),
+              turbo: clampStage(saved.upgrades?.turbo, 4),
               gearbox: clampStage(saved.upgrades?.gearbox),
               brakes: clampStage(saved.upgrades?.brakes),
               tires: clampStage(saved.upgrades?.tires),
@@ -148,12 +156,38 @@ function loadSavedProfile(): SaveProfile {
         : def;
     }
 
+    const rawWeather = parsed.weather as string | undefined;
     const weather: WeatherMode =
-      parsed.weather === 'CLEAR' || parsed.weather === 'SUNSET' || parsed.weather === 'STORM'
-        ? parsed.weather
-        : INITIAL_PROFILE.weather;
+      rawWeather === 'DAY' || rawWeather === 'SUNSET' || rawWeather === 'NIGHT'
+        ? rawWeather
+        : rawWeather === 'CLEAR'
+          ? 'DAY'
+          : rawWeather === 'STORM'
+            ? 'NIGHT'
+            : INITIAL_PROFILE.weather;
 
     const activeCarTx = sanitizedCars[activeCarId]?.transmission ?? legacyTx;
+    const today = getTodayDateKey();
+    const validChallenges =
+      parsed.dailyChallengesDate === today &&
+      Array.isArray(parsed.dailyChallenges) &&
+      parsed.dailyChallenges.length === 3
+        ? (parsed.dailyChallenges as DailyChallengeItem[])
+        : createDailyChallengesForDate(today);
+
+    const rawPlayerName =
+      typeof parsed.playerName === 'string' && parsed.playerName.trim().length > 0
+        ? parsed.playerName.trim().slice(0, 16)
+        : INITIAL_PROFILE.playerName;
+
+    const sanitizedRadarRecords: Record<string, number> = {};
+    if (parsed.radarRecords && typeof parsed.radarRecords === 'object') {
+      Object.entries(parsed.radarRecords).forEach(([k, v]) => {
+        if (typeof v === 'number' && Number.isFinite(v) && v > 0) {
+          sanitizedRadarRecords[k] = Math.round(v);
+        }
+      });
+    }
 
     return {
       ...INITIAL_PROFILE,
@@ -167,6 +201,25 @@ function loadSavedProfile(): SaveProfile {
       activeCarId,
       ownedCars: validOwned,
       cars: sanitizedCars,
+      playerName: rawPlayerName,
+      xp: typeof parsed.xp === 'number' && Number.isFinite(parsed.xp) ? Math.max(0, Math.floor(parsed.xp)) : 0,
+      reputation:
+        typeof parsed.reputation === 'number' && Number.isFinite(parsed.reputation)
+          ? Math.max(0, Math.floor(parsed.reputation))
+          : 0,
+      dailyStreak:
+        typeof parsed.dailyStreak === 'number' && Number.isFinite(parsed.dailyStreak)
+          ? Math.max(0, Math.floor(parsed.dailyStreak))
+          : 0,
+      lastDailyClaimDate:
+        typeof parsed.lastDailyClaimDate === 'string' ? parsed.lastDailyClaimDate : '',
+      dailyChallengesDate: today,
+      dailyChallenges: validChallenges,
+      radarRecords: sanitizedRadarRecords,
+      bestNoHesiCombo:
+        typeof parsed.bestNoHesiCombo === 'number' && Number.isFinite(parsed.bestNoHesiCombo)
+          ? Math.max(1, Math.floor(parsed.bestNoHesiCombo))
+          : 1,
     };
   } catch {
     return INITIAL_PROFILE;
@@ -203,21 +256,45 @@ function loadSavedSettings(
         transmission: fallbackTx,
       };
     }
-    const parsed = JSON.parse(raw) as Partial<GameSettings>;
+    const parsed = JSON.parse(raw) as Partial<GameSettings> & {
+      graphicsQuality?: string;
+      weather?: string;
+      viewDistance?: string;
+    };
+    const migratedQuality: GameSettings['graphicsQuality'] =
+      parsed.graphicsQuality === 'LOW' ||
+      parsed.graphicsQuality === 'MEDIUM' ||
+      parsed.graphicsQuality === 'HIGH'
+        ? parsed.graphicsQuality
+        : parsed.graphicsQuality === 'ULTRA'
+          ? 'HIGH'
+          : DEFAULT_SETTINGS.graphicsQuality;
+    const migratedWeather: WeatherMode =
+      parsed.weather === 'DAY' || parsed.weather === 'SUNSET' || parsed.weather === 'NIGHT'
+        ? parsed.weather
+        : parsed.weather === 'CLEAR'
+          ? 'DAY'
+          : parsed.weather === 'STORM'
+            ? 'NIGHT'
+            : fallbackWeather;
+    const migratedViewDist: GameSettings['viewDistance'] =
+      parsed.viewDistance === 'SHORT' ||
+      parsed.viewDistance === 'MEDIUM' ||
+      parsed.viewDistance === 'FAR'
+        ? parsed.viewDistance
+        : DEFAULT_SETTINGS.viewDistance;
+
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
       keybindings: sanitizeKeybindings(parsed.keybindings),
-      graphicsQuality:
-        parsed.graphicsQuality === 'LOW' ||
-        parsed.graphicsQuality === 'MEDIUM' ||
-        parsed.graphicsQuality === 'HIGH'
-          ? parsed.graphicsQuality
-          : DEFAULT_SETTINGS.graphicsQuality,
-      weather:
-        parsed.weather === 'CLEAR' || parsed.weather === 'SUNSET' || parsed.weather === 'STORM'
-          ? parsed.weather
-          : fallbackWeather,
+      graphicsQuality: migratedQuality,
+      weather: migratedWeather,
+      viewDistance: migratedViewDist,
+      exposure:
+        typeof parsed.exposure === 'number' && Number.isFinite(parsed.exposure)
+          ? Math.min(1.35, Math.max(0.65, parsed.exposure))
+          : DEFAULT_SETTINGS.exposure,
       transmission:
         parsed.transmission === 'AT' || parsed.transmission === 'MT'
           ? parsed.transmission
@@ -270,6 +347,27 @@ const INITIAL_HUD: HudSnapshot = {
   playerZ: 2.8,
   pointerLocked: false,
   radarBlips: [],
+  pendingCash: 0,
+  comboMultiplier: 1,
+  pendingBankTimerRatio: 0,
+  bulletTimeActive: false,
+  extremeRoceBanner: null,
+  radarFlashOpacity: 0,
+  radarResultBanner: null,
+  contractActive: false,
+  contractCheckpointIdx: 0,
+  contractCheckpointTotal: 10,
+  contractTimerSec: 0,
+  contractBanner: null,
+  inCarMeetZone: false,
+  nearbyRemotePlayer: null,
+  onlineConnected: false,
+  onlineRoomCode: 'PUBLIC',
+  onlinePlayersCount: 1,
+  onlinePlayers: [],
+  isKing: false,
+  duelState: null,
+  radioStation: 'OFF',
 };
 
 export default function App() {
@@ -282,6 +380,8 @@ export default function App() {
   );
   const [hud, setHud] = useState<HudSnapshot>(INITIAL_HUD);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('GRAFICOS');
+  const [progressionOpen, setProgressionOpen] = useState(false);
   const [tuningOpen, setTuningOpen] = useState(false);
   const [dealershipOpen, setDealershipOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -365,8 +465,9 @@ export default function App() {
     engineRef.current?.setStudioFocusZone(open ? 'DEALERSHIP' : 'GARAGE');
   }, []);
 
-  const handleOpenSettings = useCallback(() => {
+  const handleOpenSettings = useCallback((tab: SettingsTab = 'GRAFICOS') => {
     engineRef.current?.exitPointerLock();
+    setSettingsInitialTab(tab);
     setSettingsOpen(true);
   }, []);
 
@@ -380,6 +481,10 @@ export default function App() {
       handleOpenTuning(true);
     } else if (zone === 'DEALERSHIP') {
       handleOpenDealership(true);
+    } else if (zone === 'CONTRACT') {
+      setTuningOpen(false);
+      setDealershipOpen(false);
+      engineRef.current?.startContratoExpress();
     }
   };
 
@@ -391,6 +496,95 @@ export default function App() {
     engineRef.current?.setStudioFocusZone('TUNING');
   };
 
+  const handleProgressionEvent = useCallback(
+    (ev: ProgressionEvent) => {
+      if (ev.message) {
+        showToast(ev.message);
+      }
+      setProfile((curr) => {
+        const today = getTodayDateKey();
+        const prevChallenges =
+          curr.dailyChallengesDate === today
+            ? curr.dailyChallenges
+            : createDailyChallengesForDate(today);
+
+        const nextXp = Math.max(0, curr.xp + (ev.xpDelta ?? 0));
+        const prevRank = getRankFromXp(curr.xp);
+        const nextRank = getRankFromXp(nextXp);
+        if (nextRank > prevRank) {
+          const unlockHint =
+            nextRank >= 15 && prevRank < 15
+              ? ' · ¡Desbloqueado: Neón Pulso!'
+              : nextRank >= 10 && prevRank < 10
+                ? ' · ¡Desbloqueado: Turbo Titanio Stage 4!'
+                : nextRank >= 5 && prevRank < 5
+                  ? ' · ¡Desbloqueado: Pintura Camaleón!'
+                  : '';
+          window.setTimeout(() => {
+            showToast(`¡Subiste a Rango ${nextRank}!${unlockHint}`);
+          }, 0);
+        }
+
+        const nextRadarRecords = { ...curr.radarRecords };
+        if (ev.type === 'RADAR_HIT' && ev.radarId && ev.speedKmh) {
+          const prevRec = nextRadarRecords[ev.radarId] ?? 0;
+          if (ev.speedKmh > prevRec) {
+            nextRadarRecords[ev.radarId] = ev.speedKmh;
+          }
+        }
+
+        const nextBestCombo =
+          typeof ev.combo === 'number' && ev.combo > curr.bestNoHesiCombo
+            ? ev.combo
+            : curr.bestNoHesiCombo;
+
+        const nextChallenges = prevChallenges.map((ch) => {
+          if (ch.claimed) return ch;
+          let inc = 0;
+          if (
+            ch.type === 'NEAR_MISSES' &&
+            (ev.type === 'NEAR_MISS' || ev.type === 'EXTREME_ROCE')
+          ) {
+            inc = 1;
+          } else if (ch.type === 'HIGHWAY_KM' && ev.type === 'HIGHWAY_KM') {
+            inc = ev.kmDelta ?? 0;
+          } else if (ch.type === 'WRONG_WAY_KM' && ev.type === 'WRONG_WAY_KM') {
+            inc = ev.kmDelta ?? 0;
+          } else if (ch.type === 'RADAR_HITS' && ev.type === 'RADAR_HIT') {
+            inc = 1;
+          } else if (ch.type === 'CAR_MEET_LIKES' && ev.type === 'LIKE_SENT') {
+            inc = 1;
+          }
+          if (inc <= 0) return ch;
+          return {
+            ...ch,
+            progress: Math.min(ch.target, ch.progress + inc),
+          };
+        });
+
+        const next: SaveProfile = {
+          ...curr,
+          xp: nextXp,
+          reputation: Math.max(0, curr.reputation + (ev.repDelta ?? 0)),
+          radarRecords: nextRadarRecords,
+          bestNoHesiCombo: nextBestCombo,
+          dailyChallengesDate: today,
+          dailyChallenges: nextChallenges,
+        };
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+    },
+    [showToast]
+  );
+
+  const progressionHandlerRef = useRef<(ev: ProgressionEvent) => void>(() => {});
+  progressionHandlerRef.current = handleProgressionEvent;
+
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
@@ -401,12 +595,23 @@ export default function App() {
       settings,
       onHudUpdate: (snap) => setHud(snap),
       onProfileChange: (nextProfile) => {
-        setProfile(nextProfile);
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(nextProfile));
-        } catch {
-          // ignore
-        }
+        setProfile((curr) => {
+          const merged: SaveProfile = {
+            ...curr,
+            cash: nextProfile.cash,
+            transmission: nextProfile.transmission,
+            weather: nextProfile.weather,
+            activeCarId: nextProfile.activeCarId,
+            ownedCars: nextProfile.ownedCars,
+            cars: nextProfile.cars,
+          };
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+          } catch {
+            // ignore
+          }
+          return merged;
+        });
         setSettings((curr) => {
           if (curr.transmission === nextProfile.transmission && curr.weather === nextProfile.weather) {
             return curr;
@@ -427,6 +632,7 @@ export default function App() {
       onContextLost: (lost) => setContextLost(lost),
       onWalkingInteract: (zone) => walkingInteractRef.current(zone),
       onEnterTuningBay: () => enterTuningBayRef.current(),
+      onProgressionEvent: (ev) => progressionHandlerRef.current(ev),
     });
 
     engineRef.current = engine;
@@ -439,8 +645,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    engineRef.current?.setKeyCapturePaused(settingsOpen);
-  }, [settingsOpen]);
+    engineRef.current?.setKeyCapturePaused(settingsOpen || progressionOpen);
+  }, [settingsOpen, progressionOpen]);
 
   const handleToggleMute = () => {
     updateAndPersistSettings({ muted: !settings.muted });
@@ -524,7 +730,13 @@ export default function App() {
     const spec = CAR_CATALOG[carId] ?? CAR_CATALOG.kuruma_2008;
     const carState = profile.cars[carId] ?? createDefaultCarState(spec);
     const lvl = carState.upgrades[part] ?? 0;
-    if (lvl >= 3) return;
+    const pilotRank = getRankFromXp(profile.xp);
+    if (part === 'turbo' && lvl === 3 && pilotRank < 10) {
+      showToast('Turbo de Titanio (Stage 4) requiere Rango de Piloto Nv.10.');
+      return;
+    }
+    const maxAllowed = part === 'turbo' && pilotRank >= 10 ? 4 : 3;
+    if (lvl >= maxAllowed) return;
     const cost = getUpgradeCost(spec, part, lvl);
     if (profile.cash < cost) {
       showToast(`Necesitas $${cost.toLocaleString()} para instalar ${getUpgradeStageLabel(lvl + 1)}.`);
@@ -623,6 +835,15 @@ export default function App() {
       >
     >
   ) => {
+    const pilotRank = getRankFromXp(profile.xp);
+    if (patch.paintFinish === 'chameleon' && pilotRank < 5) {
+      showToast('Pintura Camaleón se desbloquea en Rango Nv.5.');
+      return;
+    }
+    if (patch.underglow === 'pulse_neon' && pilotRank < 15) {
+      showToast('Neón Pulso se desbloquea en Rango Nv.15.');
+      return;
+    }
     const carId = profile.activeCarId;
     const spec = CAR_CATALOG[carId] ?? CAR_CATALOG.kuruma_2008;
     const carState = profile.cars[carId] ?? createDefaultCarState(spec);
@@ -660,14 +881,64 @@ export default function App() {
     showToast(`${spec.name} restablecido a predeterminado.`);
   };
 
+  const handleClaimDailyReward = () => {
+    const today = getTodayDateKey();
+    if (profile.lastDailyClaimDate === today) return;
+    const nextStreak = profile.dailyStreak + 1;
+    const reward = DAILY_REWARDS_SCHEDULE[(nextStreak - 1) % DAILY_REWARDS_SCHEDULE.length];
+    const nextXp = profile.xp + reward.xp;
+    const next: SaveProfile = {
+      ...profile,
+      cash: profile.cash + reward.cash,
+      xp: nextXp,
+      dailyStreak: nextStreak,
+      lastDailyClaimDate: today,
+    };
+    updateAndPersistProfile(next);
+    engineRef.current?.audio.playCashBank();
+    showToast(`Recompensa Día ${reward.day}: +$${reward.cash.toLocaleString()} · +${reward.xp} XP`);
+  };
+
+  const handleClaimChallenge = (challengeId: string) => {
+    const targetCh = profile.dailyChallenges.find((c) => c.id === challengeId);
+    if (!targetCh || targetCh.claimed || targetCh.progress < targetCh.target) return;
+    const nextChallenges = profile.dailyChallenges.map((c) =>
+      c.id === challengeId ? { ...c, claimed: true } : c
+    );
+    const next: SaveProfile = {
+      ...profile,
+      cash: profile.cash + targetCh.rewardCash,
+      xp: profile.xp + targetCh.rewardXp,
+      dailyChallenges: nextChallenges,
+    };
+    updateAndPersistProfile(next);
+    engineRef.current?.audio.playMissionComplete();
+    showToast(`Desafío cobrado: +$${targetCh.rewardCash.toLocaleString()} · +${targetCh.rewardXp} XP`);
+  };
+
+  const handleChangePlayerName = (rawName: string) => {
+    const clean = rawName.trim().slice(0, 16) || 'GHOST_078';
+    const next: SaveProfile = {
+      ...profile,
+      playerName: clean,
+    };
+    updateAndPersistProfile(next);
+    engineRef.current?.joinOnlineRoom({ name: clean });
+    showToast(`Nombre de piloto: ${clean}`);
+  };
+
   const handleResetProgress = () => {
+    const today = getTodayDateKey();
     const fresh: SaveProfile = {
       ...INITIAL_PROFILE,
       weather: settings.weather,
       transmission: settings.transmission,
+      dailyChallengesDate: today,
+      dailyChallenges: createDailyChallengesForDate(today),
     };
     setTuningOpen(false);
     setDealershipOpen(false);
+    setProgressionOpen(false);
     updateAndPersistProfile(fresh);
     engineRef.current?.rebuildShowroomCar();
     showToast('Progreso reiniciado al estado inicial.');
@@ -694,11 +965,12 @@ export default function App() {
       {hud.mode === 'START_MENU' && (
         <StartMenuOverlay
           profile={profile}
-          keybindings={settings.keybindings}
           onStart={() => {
             engineRef.current?.setMode('WALKING');
           }}
-          onOpenSettings={handleOpenSettings}
+          onOpenConfig={() => handleOpenSettings('GRAFICOS')}
+          onOpenControls={() => handleOpenSettings('CONTROLES')}
+          onSelectCar={handleBuyOrSelectCar}
         />
       )}
 
@@ -722,7 +994,7 @@ export default function App() {
           }}
           onExitCar={() => engineRef.current?.exitCarInParking()}
           onTogglePointerLock={() => engineRef.current?.togglePointerLock()}
-          onOpenSettings={handleOpenSettings}
+          onOpenSettings={() => handleOpenSettings('GRAFICOS')}
           onBuyOrSelectCar={handleBuyOrSelectCar}
           onSpawnCarInFront={handleSpawnCarInFront}
           onUpgradeCar={handleUpgradeCar}
@@ -736,6 +1008,14 @@ export default function App() {
           onPreviewDealershipCar={(carId) => engineRef.current?.previewDealershipCar(carId)}
           onRevDealershipCar={(carId) => engineRef.current?.revDealershipCar(carId)}
           onTouchWalk={(k, active) => engineRef.current?.setTouchControl(k, active)}
+          onOpenProgression={() => {
+            engineRef.current?.exitPointerLock();
+            setProgressionOpen(true);
+          }}
+          onOpenOnlineSettings={() => handleOpenSettings('ONLINE')}
+          onStartContract={() => engineRef.current?.startContratoExpress()}
+          onLikeNearbyPlayer={() => engineRef.current?.likeNearbyRemotePlayer()}
+          onCycleRadio={() => engineRef.current?.cycleRadioStation()}
         />
       )}
 
@@ -745,19 +1025,35 @@ export default function App() {
           settings={settings}
           hud={hud}
           onExitHighway={() => engineRef.current?.exitToShowroom()}
-          onOpenSettings={handleOpenSettings}
+          onOpenSettings={() => handleOpenSettings('GRAFICOS')}
+          onOpenProgression={() => {
+            engineRef.current?.exitPointerLock();
+            setProgressionOpen(true);
+          }}
           onTogglePointerLock={() => engineRef.current?.togglePointerLock()}
           onToggleTransmission={() => engineRef.current?.toggleTransmission()}
           onToggleTcs={() => updateAndPersistSettings({ tcsEnabled: !settings.tcsEnabled })}
           onToggleAbs={() => updateAndPersistSettings({ absEnabled: !settings.absEnabled })}
           onShiftGear={(d) => engineRef.current?.shiftGear(d)}
+          onCycleRadio={() => engineRef.current?.cycleRadioStation()}
+          onFlashHeadlights={() => engineRef.current?.triggerHeadlightFlash()}
           onTouchControl={(k, active) => engineRef.current?.setTouchControl(k, active)}
         />
       )}
 
+      {/* Progression, Daily Rewards & Challenges Modal */}
+      <ProgressionModal
+        open={progressionOpen}
+        profile={profile}
+        onClose={() => setProgressionOpen(false)}
+        onClaimDailyReward={handleClaimDailyReward}
+        onClaimChallenge={handleClaimChallenge}
+      />
+
       {/* Global Settings Modal */}
       <SettingsModal
         open={settingsOpen}
+        initialTab={settingsInitialTab}
         settings={settings}
         onClose={() => setSettingsOpen(false)}
         onUpdateSettings={updateAndPersistSettings}
@@ -767,10 +1063,19 @@ export default function App() {
             ? () => {
                 setTuningOpen(false);
                 setDealershipOpen(false);
+                setProgressionOpen(false);
                 engineRef.current?.setMode('START_MENU');
               }
             : undefined
         }
+        playerName={profile.playerName}
+        onChangePlayerName={handleChangePlayerName}
+        onlineConnected={hud.onlineConnected}
+        onlineRoomCode={hud.onlineRoomCode}
+        onlinePlayers={hud.onlinePlayers}
+        onJoinOnlineRoom={(opts) => engineRef.current?.joinOnlineRoom(opts)}
+        radioStation={hud.radioStation}
+        onSetRadioStation={(station) => engineRef.current?.setRadioStation(station)}
       />
     </main>
   );

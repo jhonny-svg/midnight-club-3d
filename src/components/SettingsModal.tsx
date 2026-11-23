@@ -1,12 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import {
   Check,
+  Crown,
   Database,
   Gamepad2,
+  Globe,
   Keyboard,
   Monitor,
+  Radio,
   RotateCcw,
   Sliders,
+  Users,
   Volume2,
   X,
 } from 'lucide-react';
@@ -19,33 +23,67 @@ import {
   KEY_ACTION_META,
   KeyAction,
   Keybindings,
+  RadioStation,
+  RemotePlayerSummary,
   SpeedUnits,
   TransmissionMode,
+  ViewDistance,
   WeatherMode,
 } from '../game/types';
 
-type SettingsTab = 'GRAFICOS' | 'AUDIO' | 'CONTROLES' | 'DATOS';
+export type SettingsTab = 'GRAFICOS' | 'AUDIO' | 'CONTROLES' | 'ONLINE' | 'DATOS';
 
 interface SettingsModalProps {
   open: boolean;
+  initialTab?: SettingsTab;
   settings: GameSettings;
   onClose: () => void;
   onUpdateSettings: (patch: Partial<GameSettings>) => void;
   onResetProgress: () => void;
   onReturnToMenu?: () => void;
+  playerName?: string;
+  onChangePlayerName?: (name: string) => void;
+  onlineConnected?: boolean;
+  onlineRoomCode?: string;
+  onlinePlayers?: RemotePlayerSummary[];
+  onJoinOnlineRoom?: (opts: { roomCode?: string; createPrivate?: boolean; name?: string }) => void;
+  radioStation?: RadioStation;
+  onSetRadioStation?: (station: RadioStation) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   open,
+  initialTab = 'GRAFICOS',
   settings,
   onClose,
   onUpdateSettings,
   onResetProgress,
   onReturnToMenu,
+  playerName = 'GHOST_078',
+  onChangePlayerName,
+  onlineConnected = false,
+  onlineRoomCode = 'PUBLIC',
+  onlinePlayers = [],
+  onJoinOnlineRoom,
+  radioStation = 'OFF',
+  onSetRadioStation,
 }) => {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('GRAFICOS');
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [confirmReset, setConfirmReset] = useState(false);
   const [capturingAction, setCapturingAction] = useState<KeyAction | null>(null);
+  const [draftName, setDraftName] = useState(playerName);
+  const [joinCodeInput, setJoinCodeInput] = useState('');
+
+  useEffect(() => {
+    setDraftName(playerName);
+  }, [playerName]);
+
+  useEffect(() => {
+    if (open) {
+      setActiveTab(initialTab);
+      setConfirmReset(false);
+    }
+  }, [open, initialTab]);
 
   useEffect(() => {
     if (!open || !capturingAction) return;
@@ -95,6 +133,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     { id: 'GRAFICOS', label: 'Gráficos', icon: <Monitor className="h-3.5 w-3.5" /> },
     { id: 'AUDIO', label: 'Audio', icon: <Volume2 className="h-3.5 w-3.5" /> },
     { id: 'CONTROLES', label: 'Controles', icon: <Gamepad2 className="h-3.5 w-3.5" /> },
+    { id: 'ONLINE', label: 'Online', icon: <Globe className="h-3.5 w-3.5" /> },
     { id: 'DATOS', label: 'Juego / Datos', icon: <Database className="h-3.5 w-3.5" /> },
   ];
 
@@ -182,10 +221,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </label>
                   <span className="font-telemetry text-[11px] text-slate-400">
                     {settings.graphicsQuality === 'LOW'
-                      ? 'Rendimiento (1.0x)'
+                      ? 'Ahorro / Móvil · 1.0x · Sin Bloom ni Sombras'
                       : settings.graphicsQuality === 'MEDIUM'
-                        ? 'Equilibrado (1.35x)'
-                        : 'Máxima Fidelidad (2.0x)'}
+                        ? 'Equilibrado · 1.25x · Bloom Suave'
+                        : 'Máximo Detalle · 1.5x · Sombras + Bloom'}
                   </span>
                 </div>
                 <div className="grid grid-cols-3 border border-white/[0.08] bg-[#06080c]">
@@ -194,7 +233,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       key={q}
                       type="button"
                       onClick={() => onUpdateSettings({ graphicsQuality: q })}
-                      className={`py-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] transition-colors whitespace-nowrap cursor-pointer ${
+                      className={`py-2.5 text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors whitespace-nowrap cursor-pointer ${
                         idx > 0 ? 'border-l border-white/[0.08]' : ''
                       } ${
                         settings.graphicsQuality === q
@@ -224,17 +263,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <input
                   id="setting-exposure"
                   type="range"
-                  min={0.7}
-                  max={1.45}
+                  min={0.65}
+                  max={1.35}
                   step={0.05}
                   value={settings.exposure}
                   onChange={(e) => onUpdateSettings({ exposure: parseFloat(e.target.value) })}
                   className="w-full accent-[#e10600] cursor-pointer"
                 />
                 <div className="mt-1 flex justify-between text-[10px] text-slate-500 font-telemetry">
-                  <span>0.70 (Oscuro)</span>
-                  <span>1.00 (Estudio)</span>
-                  <span>1.45 (Luminoso)</span>
+                  <span>0.65 (Oscuro)</span>
+                  <span>0.95 (Natural)</span>
+                  <span>1.35 (Luminoso)</span>
                 </div>
               </div>
 
@@ -268,19 +307,59 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
 
-              {/* Weather / Atmosphere */}
+              {/* View Distance */}
               <div className="border-t border-white/[0.06] pt-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-medium uppercase tracking-[0.14em] text-slate-200">
-                    Modo de Ambiente Urbano
+                    Distancia de Visión
+                  </span>
+                  <span className="font-telemetry text-[11px] text-slate-400">
+                    {settings.viewDistance === 'SHORT'
+                      ? 'Corta (Máximos FPS)'
+                      : settings.viewDistance === 'MEDIUM'
+                        ? 'Media (Balanceada)'
+                        : 'Lejana (Horizonte Amplio)'}
                   </span>
                 </div>
                 <div className="grid grid-cols-3 border border-white/[0.08] bg-[#06080c]">
                   {(
                     [
-                      { id: 'CLEAR', label: 'Nocturno Despejado' },
-                      { id: 'SUNSET', label: 'Atardecer Wangan' },
-                      { id: 'STORM', label: 'Lluvia Nocturna' },
+                      { id: 'SHORT', label: 'Corta' },
+                      { id: 'MEDIUM', label: 'Media' },
+                      { id: 'FAR', label: 'Lejana' },
+                    ] as Array<{ id: ViewDistance; label: string }>
+                  ).map((vd, idx) => (
+                    <button
+                      key={vd.id}
+                      type="button"
+                      onClick={() => onUpdateSettings({ viewDistance: vd.id })}
+                      className={`py-2.5 px-2 text-[11px] font-semibold uppercase tracking-[0.1em] transition-colors whitespace-nowrap cursor-pointer ${
+                        idx > 0 ? 'border-l border-white/[0.08]' : ''
+                      } ${
+                        settings.viewDistance === vd.id
+                          ? 'bg-[#e10600] text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {vd.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Weather / Time of Day */}
+              <div className="border-t border-white/[0.06] pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium uppercase tracking-[0.14em] text-slate-200">
+                    Hora del Día / Clima
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 border border-white/[0.08] bg-[#06080c]">
+                  {(
+                    [
+                      { id: 'DAY', label: 'Día Claro' },
+                      { id: 'SUNSET', label: 'Atardecer' },
+                      { id: 'NIGHT', label: 'Noche Urbana' },
                     ] as Array<{ id: WeatherMode; label: string }>
                   ).map((w, idx) => (
                     <button
@@ -311,7 +390,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     Silenciar Todo el Audio
                   </div>
                   <div className="text-[11px] text-slate-400">
-                    Desactiva motor, válvulas BOV, roces cercanos y lluvia
+                    Desactiva motor, válvulas BOV, explosiones CDI y roces cercanos
                   </div>
                 </div>
                 <button
@@ -384,7 +463,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     htmlFor="setting-sfx-vol"
                     className="text-xs font-medium uppercase tracking-[0.14em] text-slate-200"
                   >
-                    Efectos, Roces Cercanos y Lluvia
+                    Efectos, Explosiones CDI y Roces Cercanos
                   </label>
                   <span className="font-telemetry text-xs font-semibold text-white">
                     {Math.round(settings.sfxVolume * 100)}%
@@ -401,6 +480,43 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   className="w-full accent-[#e10600] cursor-pointer"
                 />
               </div>
+
+              {/* Radio Nocturna Phonk / Synthwave */}
+              {onSetRadioStation && (
+                <div className="border-t border-white/[0.06] pt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-[0.14em] text-slate-200">
+                      <Radio className="h-3.5 w-3.5 text-cyan-400" />
+                      Radio del Coche (Phonk / Synthwave)
+                    </span>
+                    <span className="font-telemetry text-[11px] text-cyan-300">{radioStation}</span>
+                  </div>
+                  <div className="grid grid-cols-3 border border-white/[0.08] bg-[#06080c]">
+                    {(
+                      [
+                        { id: 'OFF', label: 'Apagada' },
+                        { id: 'PHONK', label: 'Phonk 130 BPM' },
+                        { id: 'SYNTHWAVE', label: 'Synthwave 108 BPM' },
+                      ] as Array<{ id: RadioStation; label: string }>
+                    ).map((st, idx) => (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() => onSetRadioStation(st.id)}
+                        className={`py-2.5 px-2 text-[10.5px] font-semibold uppercase tracking-[0.1em] transition-colors cursor-pointer ${
+                          idx > 0 ? 'border-l border-white/[0.08]' : ''
+                        } ${
+                          radioStation === st.id
+                            ? 'bg-cyan-500 text-slate-950 font-bold'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {st.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -592,6 +708,184 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     );
                   })}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'ONLINE' && (
+            <div className="space-y-4">
+              {/* Connection Status + Current Room */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border border-white/[0.08] bg-[#06080c] p-4">
+                <div>
+                  <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em]">
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        onlineConnected ? 'bg-emerald-400' : 'bg-amber-400'
+                      }`}
+                    />
+                    <span className={onlineConnected ? 'text-emerald-300' : 'text-amber-300'}>
+                      {onlineConnected
+                        ? 'Multijugador Cross-Play PC / Móvil Conectado'
+                        : 'Conectando al servidor WebSocket...'}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-xs text-slate-400">
+                    Sala activa:{' '}
+                    <span className="font-telemetry font-bold text-white">
+                      {onlineRoomCode}
+                    </span>{' '}
+                    · Jugadores en pista:{' '}
+                    <span className="font-telemetry font-bold text-cyan-300">
+                      {onlinePlayers.length + (onlineConnected ? 1 : 0)}
+                    </span>
+                  </div>
+                </div>
+
+                {onJoinOnlineRoom && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onJoinOnlineRoom({ roomCode: 'PUBLIC', name: draftName.trim() || playerName })
+                      }
+                      className={`border px-3 py-1.5 text-[10.5px] font-bold uppercase tracking-wider cursor-pointer ${
+                        onlineRoomCode === 'PUBLIC'
+                          ? 'border-emerald-400 bg-emerald-500/20 text-emerald-200'
+                          : 'border-white/15 bg-white/[0.04] text-slate-200 hover:border-white/35'
+                      }`}
+                    >
+                      Sala Pública
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onJoinOnlineRoom({ createPrivate: true, name: draftName.trim() || playerName })
+                      }
+                      className="bg-[#e10600] px-3 py-1.5 text-[10.5px] font-bold uppercase tracking-wider text-white hover:bg-[#ff1812] cursor-pointer"
+                    >
+                      Crear Sala Privada
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Nickname + Private Room Code */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="border border-white/[0.08] bg-[#06080c] p-3.5">
+                  <label
+                    htmlFor="online-nickname"
+                    className="block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 mb-1.5"
+                  >
+                    Nombre de Piloto Online
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      id="online-nickname"
+                      type="text"
+                      maxLength={16}
+                      value={draftName}
+                      onChange={(e) =>
+                        setDraftName(e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ''))
+                      }
+                      className="flex-1 border border-white/15 bg-black/60 px-3 py-1.5 font-telemetry text-xs font-bold text-white uppercase focus:border-cyan-400 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const clean = draftName.trim() || 'GHOST_078';
+                        onChangePlayerName?.(clean);
+                        onJoinOnlineRoom?.({ roomCode: onlineRoomCode, name: clean });
+                      }}
+                      className="border border-cyan-400/50 bg-cyan-500/15 px-3 py-1.5 text-[10.5px] font-bold uppercase text-cyan-200 hover:bg-cyan-500/30 cursor-pointer"
+                    >
+                      Aplicar
+                    </button>
+                  </div>
+                </div>
+
+                <div className="border border-white/[0.08] bg-[#06080c] p-3.5">
+                  <label
+                    htmlFor="online-room-code"
+                    className="block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 mb-1.5"
+                  >
+                    Unirse por Código de Sala
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      id="online-room-code"
+                      type="text"
+                      maxLength={10}
+                      value={joinCodeInput}
+                      onChange={(e) =>
+                        setJoinCodeInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))
+                      }
+                      placeholder="Ej. X9K2P"
+                      className="flex-1 border border-white/15 bg-black/60 px-3 py-1.5 font-telemetry text-xs font-bold tracking-widest text-white uppercase focus:border-[#e10600] focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const code = joinCodeInput.trim();
+                        if (!code) return;
+                        onJoinOnlineRoom?.({
+                          roomCode: code,
+                          name: draftName.trim() || playerName,
+                        });
+                      }}
+                      className="bg-white/[0.08] border border-white/15 px-3 py-1.5 text-[10.5px] font-bold uppercase text-white hover:border-white/35 cursor-pointer"
+                    >
+                      Entrar
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Active Room Leaderboard / Players */}
+              <div className="border border-white/[0.08] bg-[#06080c] p-3.5">
+                <div className="flex items-center justify-between mb-2.5">
+                  <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">
+                    <Users className="h-3.5 w-3.5 text-cyan-400" />
+                    Pilotos en Sala ({onlinePlayers.length})
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    Destella largas [L] cerca de un rival en el Highway para iniciar Duelo
+                  </span>
+                </div>
+
+                {onlinePlayers.length === 0 ? (
+                  <div className="border border-white/[0.05] bg-black/40 p-4 text-center text-xs text-slate-400">
+                    Eres el primer piloto conectado en esta sala. Comparte el código{' '}
+                    <span className="font-telemetry font-bold text-white">{onlineRoomCode}</span>{' '}
+                    con amigos en PC o Móvil.
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                    {onlinePlayers.map((p) => (
+                      <div
+                        key={p.id}
+                        className="flex items-center justify-between border border-white/[0.06] bg-black/40 px-3 py-2 text-xs"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          {p.isKing && <Crown className="h-3.5 w-3.5 text-amber-400 shrink-0" />}
+                          <span className="font-telemetry font-bold text-white truncate">
+                            {p.name}
+                          </span>
+                          <span className="text-[10px] uppercase text-slate-400">
+                            {p.mode === 'HIGHWAY'
+                              ? `${p.speedKmh} km/h`
+                              : p.inCarMeet
+                                ? 'Car Meet'
+                                : 'Parking'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 font-telemetry text-[11px] shrink-0">
+                          <span className="text-amber-300">{p.score} pts</span>
+                          <span className="text-pink-300">♥ {p.likes}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}

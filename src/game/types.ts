@@ -1,15 +1,17 @@
 export type GameMode = 'START_MENU' | 'WALKING' | 'PARKING_DRIVE' | 'HIGHWAY';
 export type ControlPerspective = 'IN_CAR';
-export type WeatherMode = 'CLEAR' | 'SUNSET' | 'STORM';
+export type WeatherMode = 'DAY' | 'SUNSET' | 'NIGHT';
 export type TransmissionMode = 'AT' | 'MT';
 export type CameraPreset = 'CHASE' | 'HOOD' | 'BUMPER';
 export type StudioAnglePreset = 'front34' | 'side' | 'rear34' | 'top';
 export type StudioFocusZone = 'GARAGE' | 'TUNING' | 'DEALERSHIP';
 export type GraphicsQuality = 'LOW' | 'MEDIUM' | 'HIGH';
+export type ViewDistance = 'SHORT' | 'MEDIUM' | 'FAR';
 export type SpeedUnits = 'KMH' | 'MPH';
+export type RadioStation = 'OFF' | 'PHONK' | 'SYNTHWAVE';
 
 export type SpoilerOption = 'stock' | 'none' | 'ducktail' | 'street_wing' | 'gt_wing';
-export type PaintFinish = 'gloss' | 'matte' | 'metallic' | 'chrome';
+export type PaintFinish = 'gloss' | 'matte' | 'metallic' | 'chrome' | 'chameleon';
 export type RimDesign = 'five_spoke' | 'multi_spoke' | 'deep_dish' | 'turbofan';
 export type TireProfile = 'street' | 'semi_slick' | 'racing_wide';
 export type FrontBumperOption = 'stock' | 'carbon_lip' | 'gt_splitter';
@@ -27,7 +29,9 @@ export type KeyAction =
   | 'toggleTransmission'
   | 'enterExitCar'
   | 'cycleCamera'
-  | 'togglePointerLock';
+  | 'togglePointerLock'
+  | 'flashHeadlights'
+  | 'toggleRadio';
 
 export type Keybindings = Record<KeyAction, string[]>;
 
@@ -43,6 +47,8 @@ export const DEFAULT_KEYBINDINGS: Keybindings = {
   enterExitCar: ['KeyF'],
   cycleCamera: ['KeyV'],
   togglePointerLock: ['Tab'],
+  flashHeadlights: ['KeyL'],
+  toggleRadio: ['KeyR'],
 };
 
 export const KEY_ACTION_META: Array<{
@@ -59,8 +65,10 @@ export const KEY_ACTION_META: Array<{
   { action: 'shiftDown', label: 'Bajar Marcha', desc: 'Cambio descendente en Manual (MT)' },
   { action: 'toggleTransmission', label: 'Cambiar Caja AT/MT', desc: 'Alterna Automático / Manual Secuencial' },
   { action: 'enterExitCar', label: 'Subir / Bajar del Coche', desc: 'Entra/sale del coche o vuelve al Parking' },
-  { action: 'cycleCamera', label: 'Cambiar Cámara', desc: 'Alterna Persecución / Capó / Parachoques' },
+  { action: 'cycleCamera', label: 'Cambiar Cámara', desc: 'Alterna Persecución / Cabina / Parachoques' },
   { action: 'togglePointerLock', label: 'Ocultar Puntero 360°', desc: 'Bloquea/libera el puntero para vista 360°' },
+  { action: 'flashHeadlights', label: 'Ráfaga / Retar Duelo', desc: 'Destella largas o reta a un rival en Highway' },
+  { action: 'toggleRadio', label: 'Radio Phonk / Synth', desc: 'Cambia entre Radio OFF, Phonk y Synthwave' },
 ];
 
 export function cloneDefaultKeybindings(): Keybindings {
@@ -76,6 +84,8 @@ export function cloneDefaultKeybindings(): Keybindings {
     enterExitCar: [...DEFAULT_KEYBINDINGS.enterExitCar],
     cycleCamera: [...DEFAULT_KEYBINDINGS.cycleCamera],
     togglePointerLock: [...DEFAULT_KEYBINDINGS.togglePointerLock],
+    flashHeadlights: [...DEFAULT_KEYBINDINGS.flashHeadlights],
+    toggleRadio: [...DEFAULT_KEYBINDINGS.toggleRadio],
   };
 }
 
@@ -115,9 +125,10 @@ export function formatPrimaryKeyLabel(codes: string[]): string {
 export interface GameSettings {
   // Gráficos
   graphicsQuality: GraphicsQuality;
-  exposure: number; // 0.7 .. 1.45
+  exposure: number; // 0.65 .. 1.35
   fov: number; // 60 .. 100
   weather: WeatherMode;
+  viewDistance: ViewDistance;
   // Audio
   masterVolume: number; // 0 .. 1
   engineVolume: number; // 0 .. 1
@@ -137,10 +148,11 @@ export interface GameSettings {
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
-  graphicsQuality: 'HIGH',
-  exposure: 1.0,
+  graphicsQuality: 'MEDIUM',
+  exposure: 0.95,
   fov: 72,
-  weather: 'CLEAR',
+  weather: 'DAY',
+  viewDistance: 'MEDIUM',
   masterVolume: 0.85,
   engineVolume: 0.8,
   sfxVolume: 0.85,
@@ -191,7 +203,7 @@ export interface CarSpec {
 
 export interface CarUpgrades {
   ecu: number;        // 0..3 Motor & Bloque
-  turbo: number;      // 0..3 Inducción / Turbo
+  turbo: number;      // 0..4 Inducción / Turbo (Stage 4 Titanio desbloqueable Nv.10)
   gearbox: number;    // 0..3 Transmisión
   brakes: number;     // 0..3 Frenos
   tires: number;      // 0..3 Neumáticos y Agarre
@@ -215,7 +227,7 @@ export interface CarState {
   rimColor: string;
   rimDesign: RimDesign;
   tireProfile: TireProfile;
-  underglow: string; // hex or 'none'
+  underglow: string; // hex, 'pulse_neon', or 'none'
   spoiler: SpoilerOption;
   frontBumper: FrontBumperOption;
   diffuser: DiffuserOption;
@@ -228,6 +240,25 @@ export interface CarState {
   revLimitRpm: number;
 }
 
+export type DailyChallengeType =
+  | 'NEAR_MISSES'
+  | 'HIGHWAY_KM'
+  | 'WRONG_WAY_KM'
+  | 'RADAR_HITS'
+  | 'CAR_MEET_LIKES';
+
+export interface DailyChallengeItem {
+  id: string;
+  title: string;
+  description: string;
+  type: DailyChallengeType;
+  progress: number;
+  target: number;
+  rewardCash: number;
+  rewardXp: number;
+  claimed: boolean;
+}
+
 export interface SaveProfile {
   cash: number;
   activeCarId: string;
@@ -235,6 +266,15 @@ export interface SaveProfile {
   transmission: TransmissionMode;
   weather: WeatherMode;
   cars: Record<string, CarState>;
+  playerName: string;
+  xp: number;
+  reputation: number;
+  dailyStreak: number;
+  lastDailyClaimDate: string;
+  dailyChallengesDate: string;
+  dailyChallenges: DailyChallengeItem[];
+  radarRecords: Record<string, number>;
+  bestNoHesiCombo: number;
 }
 
 export interface MissionDef {
@@ -253,12 +293,35 @@ export interface ActiveMissionState {
   completedBanner: string | null;
 }
 
-export type WalkingInteractionZone = 'CAR' | 'TUNING' | 'DEALERSHIP' | null;
+export type WalkingInteractionZone = 'CAR' | 'TUNING' | 'DEALERSHIP' | 'CONTRACT' | null;
 
 export interface RadarBlip {
   dx: number;
   dz: number;
   kind: 'traffic' | 'oncoming';
+}
+
+export interface RemotePlayerSummary {
+  id: string;
+  name: string;
+  carId: string;
+  mode: GameMode;
+  x: number;
+  z: number;
+  speedKmh: number;
+  inCarMeet: boolean;
+  likes: number;
+  score: number;
+  isKing: boolean;
+}
+
+export interface DuelHudState {
+  duelId: string;
+  opponentName: string;
+  myScore: number;
+  opponentScore: number;
+  remainingSec: number;
+  resultBanner: string | null;
 }
 
 export interface HudSnapshot {
@@ -286,9 +349,36 @@ export interface HudSnapshot {
   pointerLocked: boolean;
   cdiRacing: boolean;
   revLimiterActive: boolean;
+  // Progression, No Hesi, Radars, Contrato Express, Car Meet & Online
+  pendingCash: number;
+  comboMultiplier: number;
+  pendingBankTimerRatio: number;
+  bulletTimeActive: boolean;
+  extremeRoceBanner: string | null;
+  radarFlashOpacity: number;
+  radarResultBanner: string | null;
+  contractActive: boolean;
+  contractCheckpointIdx: number;
+  contractCheckpointTotal: number;
+  contractTimerSec: number;
+  contractBanner: string | null;
+  inCarMeetZone: boolean;
+  nearbyRemotePlayer: RemotePlayerSummary | null;
+  onlineConnected: boolean;
+  onlineRoomCode: string;
+  onlinePlayersCount: number;
+  onlinePlayers: RemotePlayerSummary[];
+  isKing: boolean;
+  duelState: DuelHudState | null;
+  radioStation: RadioStation;
 }
 
-export const UNDERGLOW_PALETTE = [
+export const UNDERGLOW_PALETTE: Array<{
+  id: string;
+  label: string;
+  hex: string;
+  unlockRank?: number;
+}> = [
   { id: 'none', label: 'Apagado', hex: 'none' },
   { id: '#0ea5e9', label: 'Azul Eléctrico', hex: '#0ea5e9' },
   { id: '#e10600', label: 'Rojo Racing', hex: '#e10600' },
@@ -296,12 +386,13 @@ export const UNDERGLOW_PALETTE = [
   { id: '#10b981', label: 'Verde Esmeralda', hex: '#10b981' },
   { id: '#f59e0b', label: 'Ámbar Dorado', hex: '#f59e0b' },
   { id: '#f8fafc', label: 'Blanco Xenón', hex: '#f8fafc' },
+  { id: 'pulse_neon', label: 'Neón Pulso (Nv.15)', hex: '#38bdf8', unlockRank: 15 },
 ];
 
 export const PAINT_PALETTE = [
   { label: 'Obsidian Metallic', hex: '#11141a' },
   { label: 'Rosso Corsa', hex: '#b91c1c' },
-  { label: 'Alpine White', hex: '#f1f5f9' },
+  { label: 'Alpine White', hex: '#dce2ea' },
   { label: 'Bayside Blue', hex: '#1d4ed8' },
   { label: 'Nardo Slate', hex: '#64748b' },
   { label: 'Midnight Violet', hex: '#4c1d95' },
@@ -316,11 +407,16 @@ export const RIM_PALETTE = [
   { label: 'Gunmetal', hex: '#475569' },
 ];
 
-export const PAINT_FINISH_OPTIONS: Array<{ id: PaintFinish; label: string }> = [
+export const PAINT_FINISH_OPTIONS: Array<{
+  id: PaintFinish;
+  label: string;
+  unlockRank?: number;
+}> = [
   { id: 'gloss', label: 'Brillante' },
   { id: 'matte', label: 'Mate' },
   { id: 'metallic', label: 'Metálico' },
   { id: 'chrome', label: 'Cromado' },
+  { id: 'chameleon', label: 'Camaleón (Nv.5)', unlockRank: 5 },
 ];
 
 export const RIM_DESIGN_OPTIONS: Array<{ id: RimDesign; label: string }> = [
@@ -440,7 +536,7 @@ export const CAR_CATALOG: Record<string, CarSpec> = {
     weightKg: 1450,
     baseZeroToHundred: 3.2,
     price: 135000,
-    defaultPaint: '#f1f5f9',
+    defaultPaint: '#dce2ea',
     defaultRim: '#d4af37',
     defaultUnderglow: 'none',
     bodyStyle: 'porsche_gt3',
@@ -598,28 +694,148 @@ export function createDefaultCarState(spec: CarSpec): CarState {
   };
 }
 
+export const DAILY_REWARDS_SCHEDULE: Array<{ day: number; cash: number; xp: number; label: string }> = [
+  { day: 1, cash: 1500, xp: 80, label: 'Día 1' },
+  { day: 2, cash: 2500, xp: 110, label: 'Día 2' },
+  { day: 3, cash: 4000, xp: 140, label: 'Día 3' },
+  { day: 4, cash: 6000, xp: 180, label: 'Día 4' },
+  { day: 5, cash: 8500, xp: 220, label: 'Día 5' },
+  { day: 6, cash: 11000, xp: 280, label: 'Día 6' },
+  { day: 7, cash: 18000, xp: 450, label: 'Día 7 VIP' },
+];
+
+export function getTodayDateKey(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function getRankFromXp(xp: number): number {
+  const safe = Math.max(0, Math.floor(xp));
+  return Math.max(1, Math.floor(1 + Math.sqrt(safe / 180)));
+}
+
+export function getXpThresholdForRank(rank: number): number {
+  if (rank <= 1) return 0;
+  return (rank - 1) * (rank - 1) * 180;
+}
+
+export function getXpProgressInRank(xp: number): {
+  rank: number;
+  currentXp: number;
+  nextLevelXp: number;
+  ratio: number;
+} {
+  const rank = getRankFromXp(xp);
+  const start = getXpThresholdForRank(rank);
+  const end = getXpThresholdForRank(rank + 1);
+  const span = Math.max(180, end - start);
+  const currentXp = Math.max(0, Math.floor(xp) - start);
+  return {
+    rank,
+    currentXp,
+    nextLevelXp: span,
+    ratio: Math.min(1, Math.max(0, currentXp / span)),
+  };
+}
+
+export function createDailyChallengesForDate(dateKey: string): DailyChallengeItem[] {
+  const pool: Array<Omit<DailyChallengeItem, 'id' | 'progress' | 'claimed'>> = [
+    {
+      title: 'Cirujano del Tráfico',
+      description: 'Completa 12 roces cercanos sin chocar',
+      type: 'NEAR_MISSES',
+      target: 12,
+      rewardCash: 4500,
+      rewardXp: 180,
+    },
+    {
+      title: 'Corredor de Wangan',
+      description: 'Recorre 8 km en el Highway',
+      type: 'HIGHWAY_KM',
+      target: 8,
+      rewardCash: 5200,
+      rewardXp: 210,
+    },
+    {
+      title: 'Cazador de Radares',
+      description: 'Supera 3 radares de velocidad en el Highway',
+      type: 'RADAR_HITS',
+      target: 3,
+      rewardCash: 4800,
+      rewardXp: 190,
+    },
+    {
+      title: 'Kamikaze Nocturno',
+      description: 'Conduce 3 km en sentido contrario',
+      type: 'WRONG_WAY_KM',
+      target: 3,
+      rewardCash: 6500,
+      rewardXp: 260,
+    },
+    {
+      title: 'Espíritu Car Meet',
+      description: 'Vota un coche rival en la Zona Car Meet',
+      type: 'CAR_MEET_LIKES',
+      target: 1,
+      rewardCash: 3200,
+      rewardXp: 150,
+    },
+  ];
+  // Pick 3 deterministic challenges seeded by dateKey
+  let seed = 0;
+  for (let i = 0; i < dateKey.length; i++) seed = (seed * 31 + dateKey.charCodeAt(i)) | 0;
+  const picked: DailyChallengeItem[] = [];
+  const used = new Set<number>();
+  for (let k = 0; k < 3; k++) {
+    let idx = Math.abs(seed + k * 7) % pool.length;
+    while (used.has(idx)) idx = (idx + 1) % pool.length;
+    used.add(idx);
+    const tpl = pool[idx];
+    picked.push({
+      id: `${dateKey}_${tpl.type}`,
+      ...tpl,
+      progress: 0,
+      claimed: false,
+    });
+  }
+  return picked;
+}
+
 export const INITIAL_PROFILE: SaveProfile = {
   cash: 12500,
   activeCarId: 'kuruma_2008',
   ownedCars: ['kuruma_2008'],
   transmission: 'AT',
-  weather: 'CLEAR',
+  weather: 'DAY',
   cars: Object.fromEntries(
     Object.values(CAR_CATALOG).map((spec) => [spec.id, createDefaultCarState(spec)])
   ),
+  playerName: 'GHOST_078',
+  xp: 0,
+  reputation: 0,
+  dailyStreak: 0,
+  lastDailyClaimDate: '',
+  dailyChallengesDate: getTodayDateKey(),
+  dailyChallenges: createDailyChallengesForDate(getTodayDateKey()),
+  radarRecords: {},
+  bestNoHesiCombo: 1,
 };
 
 const ECU_HP_MULT = [1.0, 1.15, 1.35, 1.6];
-const TURBO_HP_BONUS = [0, 0.14, 0.28, 0.44];
+const TURBO_HP_BONUS = [0, 0.14, 0.28, 0.44, 0.65];
 const EXHAUST_HP_BONUS = [0, 0.04, 0.08, 0.13];
-const TURBO_TOP_SPEED_KMH = [0, 12, 24, 35];
+const TURBO_TOP_SPEED_KMH = [0, 12, 24, 35, 52];
 const WEIGHT_REDUCTION_KG = [0, 60, 120, 180];
 
 export function getUpgradeStageLabel(lvl: number): string {
   if (lvl <= 0) return 'Stock';
   if (lvl === 1) return 'Stage 1';
   if (lvl === 2) return 'Stage 2';
-  return 'Stage 3 Racing';
+  if (lvl === 3) return 'Stage 3 Racing';
+  return 'Stage 4 Titanio';
 }
 
 export function getUpgradeCost(spec: CarSpec, part: UpgradePartKey, currentLevel: number): number {
@@ -635,13 +851,13 @@ export function getUpgradeCost(spec: CarSpec, part: UpgradePartKey, currentLevel
     nitroUp: 1500,
   };
   const tierFactor = 0.75 + spec.baseHp / 420;
-  const stageMult = [1.0, 1.9, 3.1][currentLevel] ?? 3.1;
+  const stageMult = [1.0, 1.9, 3.1, 4.6][currentLevel] ?? 4.6;
   return Math.round((baseByPart[part] * tierFactor * stageMult) / 50) * 50;
 }
 
 export function getCarEffectiveHp(spec: CarSpec, state: CarState): number {
   const ecu = Math.min(3, Math.max(0, state.upgrades.ecu ?? 0));
-  const turbo = Math.min(3, Math.max(0, state.upgrades.turbo ?? 0));
+  const turbo = Math.min(4, Math.max(0, state.upgrades.turbo ?? 0));
   const exhaust = Math.min(3, Math.max(0, state.upgrades.exhaust ?? 0));
   const cdiFactor = state.cdiRacing
     ? 1 + Math.max(0, state.revLimitRpm - spec.stockRedlineRpm) / 28000
@@ -652,7 +868,7 @@ export function getCarEffectiveHp(spec: CarSpec, state: CarState): number {
 
 export function getCarEffectiveTorque(spec: CarSpec, state: CarState): number {
   const ecu = Math.min(3, Math.max(0, state.upgrades.ecu ?? 0));
-  const turbo = Math.min(3, Math.max(0, state.upgrades.turbo ?? 0));
+  const turbo = Math.min(4, Math.max(0, state.upgrades.turbo ?? 0));
   const exhaust = Math.min(3, Math.max(0, state.upgrades.exhaust ?? 0));
   const mult =
     1 +
@@ -678,7 +894,7 @@ export function getCarEffectiveMaxRpm(spec: CarSpec, state: CarState): number {
 
 export function getCarEffectiveTopSpeed(spec: CarSpec, state: CarState): number {
   const ecu = Math.min(3, Math.max(0, state.upgrades.ecu ?? 0));
-  const turbo = Math.min(3, Math.max(0, state.upgrades.turbo ?? 0));
+  const turbo = Math.min(4, Math.max(0, state.upgrades.turbo ?? 0));
   const gearbox = Math.min(3, Math.max(0, state.upgrades.gearbox ?? 0));
   const exhaust = Math.min(3, Math.max(0, state.upgrades.exhaust ?? 0));
 
